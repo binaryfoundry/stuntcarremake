@@ -85,6 +85,7 @@ static int g_rightSampleCount = 0;
 static int g_accelSampleCount = 0;
 static int g_brakeSampleCount = 0;
 static int g_boostSampleCount = 0;
+static bool g_restartEngineAudioOnFirstInput = false;
 
 bool bShowStats = FALSE;
 bool bNewGame = FALSE;
@@ -247,7 +248,8 @@ bool DSSetMode() {
         return FALSE;
 
     for (i = 0; i < 8; i++) {
-        EngineSoundBuffers[i]->SetPan(DSBPAN_LEFT);
+        // Keep engine centered for balanced stereo output on modern devices.
+        EngineSoundBuffers[i]->SetPan(DSBPAN_CENTER);
         // Original Amiga volume was 48, but have reduced this for testing
         EngineSoundBuffers[i]->SetVolume(AmigaVolumeToMixerGain(48 / 2));
     }
@@ -897,12 +899,19 @@ static void SetOpponentsCarWorldTransform(void) {
                            VCAR_HEIGHT / 4.0f);
 }
 
+static void RestartEngineAudioBuffers(bool resetEngineModel) {
+    for (int i = 0; i < 8; ++i) {
+        EngineSoundBuffers[i]->Stop();
+        EngineSoundBuffers[i]->SetCurrentPosition(0);
+    }
+    engineSoundPlaying = FALSE;
+    if (resetEngineModel)
+        ResetEngineAudioState();
+}
+
 static void StopEngineSound(void) {
     if (engineSoundPlaying) {
-        for (int i = 0; i < 8; i++)
-            EngineSoundBuffers[i]->Stop();
-
-        engineSoundPlaying = FALSE;
+        RestartEngineAudioBuffers(true);
     }
 }
 
@@ -925,11 +934,7 @@ void CALLBACK OnFrameMove(IDirect3DDevice9* pd3dDevice, double fTime, float fEla
         return;
 
     if ((GameMode == TRACK_PREVIEW) || (GameMode == GAME_IN_PROGRESS)) {
-        if (GameMode == GAME_IN_PROGRESS) {
-            // Fixed-step engine/audio update (base gameplay logic tick).
-            if (!bPaused)
-                FramesWheelsEngine(EngineSoundBuffers);
-        }
+        // Engine/audio is stepped from the 50Hz substep loop in RunFrame().
     } else if (GameMode == TRACK_MENU) {
         // Stop engine sound if at track menu or if game has finished
         StopEngineSound();
@@ -1177,8 +1182,14 @@ static void HandleTrackPreview(TextHelper& txtHelper) {
     txtHelper.DrawTextLine(L"  M = Back to track menu, Escape = Quit");
 
     if (keyPress == STARTMENU) {
+        RestartEngineAudioBuffers(true);
         bNewGame = TRUE;
         GameMode = GAME_IN_PROGRESS;
+        g_restartEngineAudioOnFirstInput = true;
+        // Reduce start-of-race input/audio latency: make next substep trigger
+        // a full logic tick immediately.
+        g_baseLogicSubstepCounter = PHYSICS_SUBSTEPS_PER_BASE_LOGIC - 1;
+        g_logicAccumulator = PHYSICS_STEP_SECONDS;
         g_logicInput = lastInput;
         ResetControlSamplingWindow();
         // initialise game data
@@ -1582,6 +1593,7 @@ bool process_events() {
             case SDLK_m:
                 if (GameMode != TRACK_MENU) {
                     GameMode = TRACK_MENU;
+                    g_restartEngineAudioOnFirstInput = false;
 
                     opponentsID = NO_OPPONENT;
 
@@ -1779,6 +1791,24 @@ static bool RunFrame(double frameTime, bool allowQuit) {
         g_logicAccumulator -= PHYSICS_STEP_SECONDS;
         ++g_physicsTicksInWindow;
         ++g_physicsTickTotal;
+        if ((GameMode == GAME_IN_PROGRESS) && (!bPaused)) {
+            const DWORD drivingInputMask = KEY_P1_LEFT | KEY_P1_RIGHT | KEY_P1_ACCEL | KEY_P1_BRAKE | KEY_P1_BOOST;
+            if (g_restartEngineAudioOnFirstInput) {
+                // Keep engine audio fully silent until the first gameplay input,
+                // but continue advancing engine state so revs are prewarmed.
+                StepEngineAudioStateSubstep(PHYSICS_SUBSTEPS_PER_BASE_LOGIC);
+                if ((lastInput & drivingInputMask) != 0) {
+                    RestartEngineAudioBuffers(false);
+                    PrimeEngineAudioForGameplayStart();
+                    g_restartEngineAudioOnFirstInput = false;
+                    FramesWheelsEngineSubstep(EngineSoundBuffers, PHYSICS_SUBSTEPS_PER_BASE_LOGIC);
+                } else if (engineSoundPlaying) {
+                    RestartEngineAudioBuffers(false);
+                }
+            } else {
+                FramesWheelsEngineSubstep(EngineSoundBuffers, PHYSICS_SUBSTEPS_PER_BASE_LOGIC);
+            }
+        }
         SampleControlsForLogicSubstep(lastInput);
 
         ++g_baseLogicSubstepCounter;

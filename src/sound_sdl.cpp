@@ -39,7 +39,8 @@ static void audio_callback(void* userdata, Uint8* stream, int len) {
     (void)userdata;
 
     float* out = reinterpret_cast<float*>(stream);
-    const int out_frames = len / static_cast<int>(sizeof(float) * 2);
+    const int channels = (g_audio_spec.channels > 0) ? g_audio_spec.channels : 2;
+    const int out_frames = len / static_cast<int>(sizeof(float) * channels);
     memset(stream, 0, len);
 
     for (sound_source_t* source : g_sources) {
@@ -96,14 +97,19 @@ static void audio_callback(void* userdata, Uint8* stream, int len) {
             const float mix_l = src_l + (next_l - src_l) * frac;
             const float mix_r = src_r + (next_r - src_r) * frac;
 
-            out[frame * 2] += mix_l * gain_l;
-            out[frame * 2 + 1] += mix_r * gain_r;
+            const int base = frame * channels;
+            if (channels == 1) {
+                out[base] += (mix_l * gain_l + mix_r * gain_r) * 0.5f;
+            } else {
+                out[base] += mix_l * gain_l;
+                out[base + 1] += mix_r * gain_r;
+            }
 
             source->frame_pos += step;
         }
     }
 
-    for (int i = 0; i < out_frames * 2; ++i) {
+    for (int i = 0; i < out_frames * channels; ++i) {
         out[i] = clampf(out[i], -1.0f, 1.0f);
     }
 }
@@ -124,14 +130,16 @@ bool sound_init(void) {
     desired.freq = 44100;
     desired.format = AUDIO_F32SYS;
     desired.channels = 2;
-    desired.samples = 1024;
+    desired.samples = 256;
     desired.callback = audio_callback;
 
-    g_audio_device = SDL_OpenAudioDevice(NULL, 0, &desired, &g_audio_spec, 0);
+    g_audio_device = SDL_OpenAudioDevice(NULL, 0, &desired, &g_audio_spec, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
     if (g_audio_device == 0) {
         printf("SDL audio init failed: %s\n", SDL_GetError());
         return false;
     }
+    printf("SDL audio opened: %d Hz, %d channels, %d samples\n", g_audio_spec.freq, g_audio_spec.channels,
+           g_audio_spec.samples);
 
     SDL_PauseAudioDevice(g_audio_device, 0);
     sound_initialized = true;
@@ -193,17 +201,25 @@ void sound_set_pitch(sound_source_t* source, float pitch) {
     if (!source) {
         return;
     }
+    if (sound_initialized && g_audio_device != 0)
+        SDL_LockAudioDevice(g_audio_device);
     source->pitch_scale = (pitch > 0.0f) ? pitch : 1.0f;
+    if (sound_initialized && g_audio_device != 0)
+        SDL_UnlockAudioDevice(g_audio_device);
 }
 
 void sound_set_frequency(sound_source_t* source, long frequency) {
     if (!source || !source->buff || source->buff->base_frequency <= 0) {
         return;
     }
+    if (sound_initialized && g_audio_device != 0)
+        SDL_LockAudioDevice(g_audio_device);
     source->pitch_scale = static_cast<double>(frequency) / static_cast<double>(source->buff->base_frequency);
     if (source->pitch_scale <= 0.0) {
         source->pitch_scale = 1.0;
     }
+    if (sound_initialized && g_audio_device != 0)
+        SDL_UnlockAudioDevice(g_audio_device);
 }
 
 void sound_volume(sound_source_t* source, long millibels) {
@@ -261,14 +277,24 @@ void sound_set_position(sound_source_t* source, long newpos) {
     if (!source || !source->buff || source->buff->bytes_per_frame <= 0) {
         return;
     }
+    if (sound_initialized && g_audio_device != 0)
+        SDL_LockAudioDevice(g_audio_device);
     source->frame_pos = static_cast<double>(newpos / source->buff->bytes_per_frame);
+    if (sound_initialized && g_audio_device != 0)
+        SDL_UnlockAudioDevice(g_audio_device);
 }
 
 long sound_get_position(sound_source_t* source) {
     if (!source || !source->buff) {
         return 0;
     }
-    return static_cast<long>(source->frame_pos) * source->buff->bytes_per_frame;
+    long pos;
+    if (sound_initialized && g_audio_device != 0)
+        SDL_LockAudioDevice(g_audio_device);
+    pos = static_cast<long>(source->frame_pos) * source->buff->bytes_per_frame;
+    if (sound_initialized && g_audio_device != 0)
+        SDL_UnlockAudioDevice(g_audio_device);
+    return pos;
 }
 
 sound_buffer_t* sound_load(void* data, int size, int bits, int sign, int channels, int freq) {

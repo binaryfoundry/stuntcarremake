@@ -282,6 +282,7 @@ static void UpdateEngineRevs(void);
 static void DrawDustClouds(void);
 static void DrawSparks(void);
 static void SetWheelRotationSpeed();
+void ResetEngineAudioState(void);
 
 #ifdef NOT_USED
 static void RewindRecording(void);
@@ -422,6 +423,7 @@ void ResetPlayer(void) {
     player_x_rotation_acceleration = 0;
     player_y_rotation_acceleration = 0;
     player_z_rotation_acceleration = 0;
+    ResetEngineAudioState();
     return;
 }
 
@@ -3270,6 +3272,7 @@ long CalculateDisplaySpeed(void) {
 static long engineRevs = 0;
 static long engineRevsChange = 0;
 static long engineFluctuation = 0;
+static int lastEngineSoundIndex = -1;
 
 // Tested against Amiga
 static void UpdateEngineRevs(void) {
@@ -3352,6 +3355,32 @@ extern long engineSoundPlaying;
 
 int enginePeriod = 198;
 int engineSoundIndex = -1;
+static long wheel_left_step_remainder = 0;
+static long wheel_right_step_remainder = 0;
+static long engine_revs_step_remainder = 0;
+static int pendingEngineSoundIndex = -1;
+static int pendingEngineSoundIndexCount = 0;
+
+void ResetEngineAudioState(void) {
+    engineRevs = 0;
+    engineRevsChange = 0;
+    engineFluctuation = 0;
+    enginePeriod = 198;
+    engineSoundIndex = -1;
+    lastEngineSoundIndex = -1;
+    wheel_left_step_remainder = 0;
+    wheel_right_step_remainder = 0;
+    engine_revs_step_remainder = 0;
+    pendingEngineSoundIndex = -1;
+    pendingEngineSoundIndexCount = 0;
+}
+
+void PrimeEngineAudioForGameplayStart(void) {
+    // Workaround for missing lift/countdown animation in port:
+    // avoid very slow ramp from absolute zero when gameplay starts.
+    if (engineRevs < 192)
+        engineRevs = 192;
+}
 
 //#define    JUST_USE_ONE_SOUND
 
@@ -3359,7 +3388,32 @@ int engineSoundIndex = -1;
 // All sounds playing but mute the ones that aren't required - WORSE
 // Start the new sound playing at the same percentage through as the previous sound - SLIGHTLY BETTER
 
-void FramesWheelsEngine(IDirectSoundBuffer8* engineSoundBuffers[]) {
+static long DistributeStepValue(long full_step_value, int step_divisor, long* step_remainder_in_out) {
+    if (step_divisor <= 1) {
+        *step_remainder_in_out = 0;
+        return full_step_value;
+    }
+
+    *step_remainder_in_out += full_step_value;
+    long substep_value = *step_remainder_in_out / step_divisor;
+    *step_remainder_in_out -= (substep_value * step_divisor);
+    return substep_value;
+}
+
+void StepEngineAudioStateSubstep(int substeps_per_logic) {
+    long left_step = DistributeStepValue(front_left_wheel_speed, substeps_per_logic, &wheel_left_step_remainder);
+    long right_step = DistributeStepValue(front_right_wheel_speed, substeps_per_logic, &wheel_right_step_remainder);
+    leftwheel_angle = (leftwheel_angle + left_step) & WHEEL_ANGLE_MASK;
+    rightwheel_angle = (leftwheel_angle + right_step) & WHEEL_ANGLE_MASK;
+
+    long rev_step = DistributeStepValue(engineRevsChange, substeps_per_logic, &engine_revs_step_remainder);
+    long r = engineRevs + rev_step;
+    if (r < 0)
+        r = 0;
+    engineRevs = r;
+}
+
+static void FramesWheelsEngineInternal(IDirectSoundBuffer8* engineSoundBuffers[], int step_divisor) {
     /* SECTION BELOW HASN'T BEEN CONVERTED
     clr.w    d1
     clr.w    d2
@@ -3381,14 +3435,22 @@ fwe2    tst.b    B.5d724
 fwe3    move.w    sprite.DMA.value,dmacon+custom
 */
     // wheel update
-
-    leftwheel_angle = (leftwheel_angle + front_left_wheel_speed) & WHEEL_ANGLE_MASK;
-    rightwheel_angle = (leftwheel_angle + front_right_wheel_speed) & WHEEL_ANGLE_MASK;
+    if (!engineSoundPlaying) {
+        wheel_left_step_remainder = 0;
+        wheel_right_step_remainder = 0;
+        engine_revs_step_remainder = 0;
+        pendingEngineSoundIndex = -1;
+        pendingEngineSoundIndexCount = 0;
+    }
+    long left_step = DistributeStepValue(front_left_wheel_speed, step_divisor, &wheel_left_step_remainder);
+    long right_step = DistributeStepValue(front_right_wheel_speed, step_divisor, &wheel_right_step_remainder);
+    leftwheel_angle = (leftwheel_angle + left_step) & WHEEL_ANGLE_MASK;
+    rightwheel_angle = (leftwheel_angle + right_step) & WHEEL_ANGLE_MASK;
 
     int period, index;
     DWORD freq;
-    int r = engineRevs + engineRevsChange;
-    static int lastEngineSoundIndex = -1;
+    long rev_step = DistributeStepValue(engineRevsChange, step_divisor, &engine_revs_step_remainder);
+    int r = engineRevs + rev_step;
     DWORD currentPlayCursor;
 
     if (r < 0) {
@@ -3416,14 +3478,57 @@ fwe3    move.w    sprite.DMA.value,dmacon+custom
     if (period < 124)
         period = 124; // lowest possible period
 
-    // Calculate sound index that will give period < 256
-    while (period >= 256) {
-        period >>= 1;
-        --index;
+    const int base_period = period;
+    int desired_period = period;
+    int desired_index = index;
 
-        if (index < 0)
-            index = 0;
+    // Calculate sound index that will give period < 256.
+    while (desired_period >= 256) {
+        desired_period >>= 1;
+        --desired_index;
+
+        if (desired_index < 0)
+            desired_index = 0;
     }
+
+    int target_index = desired_index;
+    if ((step_divisor > 1) && engineSoundPlaying && (lastEngineSoundIndex >= 0) &&
+        (desired_index != lastEngineSoundIndex)) {
+        // In substep mode, require stable demand before switching sample bank.
+        int index_delta = desired_index - lastEngineSoundIndex;
+        if (index_delta < 0)
+            index_delta = -index_delta;
+        const int switch_stable_steps = (index_delta > 1) ? 1 : 2;
+
+        if (pendingEngineSoundIndex != desired_index) {
+            pendingEngineSoundIndex = desired_index;
+            pendingEngineSoundIndexCount = 1;
+        } else {
+            ++pendingEngineSoundIndexCount;
+        }
+
+        if (pendingEngineSoundIndexCount < switch_stable_steps) {
+            target_index = lastEngineSoundIndex;
+        } else {
+            pendingEngineSoundIndex = -1;
+            pendingEngineSoundIndexCount = 0;
+        }
+    } else {
+        pendingEngineSoundIndex = -1;
+        pendingEngineSoundIndexCount = 0;
+    }
+
+    int target_period = base_period;
+    int shifts = 6 - target_index;
+    while (shifts > 0) {
+        target_period >>= 1;
+        --shifts;
+    }
+    if (target_period < 124)
+        target_period = 124;
+
+    period = target_period;
+    index = target_index;
     freq = AMIGA_PAL_HZ /
            period; // Rearranging formula: period = clock constant (AMIGA_PAL_HZ) / frequency (samples per second)
 
@@ -3449,24 +3554,19 @@ fwe3    move.w    sprite.DMA.value,dmacon+custom
     if (!engineSoundPlaying) {
         // Reset last index so that logic below will restart the engine (e.g. after game was paused)
         lastEngineSoundIndex = -1;
+        pendingEngineSoundIndex = -1;
+        pendingEngineSoundIndexCount = 0;
     }
 
     if (engineSoundIndex != lastEngineSoundIndex) {
         // Stop the old engine sound
         if (lastEngineSoundIndex >= 0) {
-            engineSoundBuffers[lastEngineSoundIndex]->GetCurrentPosition(&currentPlayCursor, NULL);
             engineSoundBuffers[lastEngineSoundIndex]->Stop();
-        } else
-            currentPlayCursor = 0;
+        }
 
-        // Start the new engine sound
-
-        // Attempt to start at same position through as previous sound
-        if (engineSoundIndex > lastEngineSoundIndex)
-            currentPlayCursor = currentPlayCursor / 2;
-        else
-            currentPlayCursor = currentPlayCursor * 2;
-
+        // Start the new engine sound from the beginning. Cursor carry between
+        // different sample banks can drift in the SDL backend and add lag.
+        currentPlayCursor = 0;
         engineSoundBuffers[engineSoundIndex]->SetCurrentPosition(currentPlayCursor);
         engineSoundBuffers[engineSoundIndex]->Play(NULL, NULL, DSBPLAY_LOOPING);
 
@@ -3476,6 +3576,14 @@ fwe3    move.w    sprite.DMA.value,dmacon+custom
 
     // Set the frequency of the current engine sound
     engineSoundBuffers[engineSoundIndex]->SetFrequency(freq);
+}
+
+void FramesWheelsEngine(IDirectSoundBuffer8* engineSoundBuffers[]) {
+    FramesWheelsEngineInternal(engineSoundBuffers, 1);
+}
+
+void FramesWheelsEngineSubstep(IDirectSoundBuffer8* engineSoundBuffers[], int substeps_per_logic) {
+    FramesWheelsEngineInternal(engineSoundBuffers, substeps_per_logic);
 }
 
 #ifdef TESTENGINE
