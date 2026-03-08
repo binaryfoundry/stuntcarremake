@@ -10,7 +10,7 @@
 /*	============= */
 /*	Include files */
 /*	============= */
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include "Track.h"
 #include "StuntCarRacer.h"
@@ -2497,7 +2497,7 @@ static unsigned char TAB5a9a6[16] = {0xf7,0xf7,0xf6,0xf6,0xf5,0xf5,0xf6,0xf7,0xf
 void MoveDrawBridge( void )
 {
 long f, i, height, y, yinc;
-	IDirect3DDevice9 *pd3dDevice = DXUTGetD3DDevice();
+	IDirect3DDevice9 *pd3dDevice = GetRenderDevice();
 
 	if (TrackID != DRAW_BRIDGE)
 		return;
@@ -2784,3 +2784,4 @@ const char* filename[] = {"Tracks/LittleRamp.bin", "Tracks/SteppingStones.bin", 
 #endif
 	return (void*)pTRACKBytes;
 	}
+

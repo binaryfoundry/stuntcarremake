@@ -6,7 +6,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 //--------------------------------------------------------------------------------------
 
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include "StuntCarRacer.h"
 #include "3D_Engine.h"
@@ -151,7 +151,7 @@ bool DSInit()
 	//
 	//	Now set the cooperation level
 
-    err = ds->SetCooperativeLevel(DXUTGetHWND(), DSSCL_NORMAL );
+    err = ds->SetCooperativeLevel(GetWindowHandle(), DSSCL_NORMAL );
 
     if (err != DS_OK)
         return FALSE;
@@ -175,13 +175,13 @@ bool DSSetMode()
 	if ((WreckSoundBuffer = MakeSoundBuffer(ds, L"WRECK")) == NULL)
 		return FALSE;
 	WreckSoundBuffer->SetPan(DSBPAN_RIGHT);
-	WreckSoundBuffer->SetVolume(AmigaVolumeToDirectX(64));
+	WreckSoundBuffer->SetVolume(AmigaVolumeToMixerGain(64));
 
 	if ((HitCarSoundBuffer = MakeSoundBuffer(ds, L"HITCAR")) == NULL)
 		return FALSE;
 	HitCarSoundBuffer->SetFrequency(AMIGA_PAL_HZ / 238);
 	HitCarSoundBuffer->SetPan(DSBPAN_RIGHT);
-	HitCarSoundBuffer->SetVolume(AmigaVolumeToDirectX(56));
+	HitCarSoundBuffer->SetVolume(AmigaVolumeToMixerGain(56));
 
 	if ((GroundedSoundBuffer = MakeSoundBuffer(ds, L"GROUNDED")) == NULL)
 		return FALSE;
@@ -192,18 +192,18 @@ bool DSSetMode()
 		return FALSE;
 	CreakSoundBuffer->SetFrequency(AMIGA_PAL_HZ / 238);
 	CreakSoundBuffer->SetPan(DSBPAN_RIGHT);
-	CreakSoundBuffer->SetVolume(AmigaVolumeToDirectX(64));
+	CreakSoundBuffer->SetVolume(AmigaVolumeToMixerGain(64));
 
 	if ((SmashSoundBuffer = MakeSoundBuffer(ds, L"SMASH")) == NULL)
 		return FALSE;
 	SmashSoundBuffer->SetFrequency(AMIGA_PAL_HZ / 280);
 	SmashSoundBuffer->SetPan(DSBPAN_LEFT);
-	SmashSoundBuffer->SetVolume(AmigaVolumeToDirectX(64));
+	SmashSoundBuffer->SetVolume(AmigaVolumeToMixerGain(64));
 
 	if ((OffRoadSoundBuffer = MakeSoundBuffer(ds, L"OFFROAD")) == NULL)
 		return FALSE;
 	OffRoadSoundBuffer->SetPan(DSBPAN_RIGHT);
-	OffRoadSoundBuffer->SetVolume(AmigaVolumeToDirectX(64));
+	OffRoadSoundBuffer->SetVolume(AmigaVolumeToMixerGain(64));
 
 	if ((EngineSoundBuffers[0] = MakeSoundBuffer(ds, L"TICKOVER")) == NULL)
 		return FALSE;
@@ -226,7 +226,7 @@ bool DSSetMode()
 	{
 		EngineSoundBuffers[i]->SetPan(DSBPAN_LEFT);
 		// Original Amiga volume was 48, but have reduced this for testing
-		EngineSoundBuffers[i]->SetVolume(AmigaVolumeToDirectX(48/2));
+		EngineSoundBuffers[i]->SetVolume(AmigaVolumeToMixerGain(48/2));
 	}
 
 	return TRUE;
@@ -325,7 +325,7 @@ void GetScreenDimensions( long *screen_width,
 	*screen_height = 480;
 #else
 	const D3DSURFACE_DESC *desc;
-	desc = DXUTGetBackBufferSurfaceDesc();
+	desc = GetBackBufferSurfaceDesc();
 
 	*screen_width = desc->Width;
 	*screen_height = desc->Height;
@@ -487,182 +487,12 @@ static void EnforceConstantFrameRate( long max_frame_rate )
 //--------------------------------------------------------------------------------------
 // Global variables
 //--------------------------------------------------------------------------------------
-#ifdef linux
 TTF_Font *g_pFont = NULL;
 TTF_Font *g_pFontLarge = NULL;
 float GetTextScale() {
 	return 1.0f;	//TODO
 }
 GLuint   g_pSprite = 0;	// Texture for batching text calls
-#else
-ID3DXFont *g_pFont = NULL;         // Font for drawing text
-ID3DXFont *g_pFontLarge = NULL;    // Font for drawing large text
-
-/*	======================================================================================= */
-/*	Function:		GetTextScale															*/
-/*																									*/
-/*	Description:	Calculate text scaling factor based on current vs base resolution		*/
-/*					Used to scale font sizes and text positions for different window sizes	*/
-/*																									*/
-/*	Returns:		Scaling factor (1.0 = base resolution, 2.0 = double size, etc.)		*/
-/*	======================================================================================= */
-
-// Helper function to get text scale based on current resolution
-float GetTextScale()
-{
-	long current_width, current_height;
-	GetScreenDimensions(&current_width, &current_height);
-	float base_width = wideScreen ? static_cast<float>(BASE_WIDTH_WIDESCREEN) : static_cast<float>(BASE_WIDTH_STANDARD);
-	return static_cast<float>(current_width) / base_width;
-}
-ID3DXSprite *g_pSprite = NULL;       // Sprite for batching draw text calls
-#endif
-
-#ifndef linux
-//--------------------------------------------------------------------------------------
-// Rejects any devices that aren't acceptable by returning false
-//--------------------------------------------------------------------------------------
-bool CALLBACK IsDeviceAcceptable( D3DCAPS9 *pCaps, D3DFORMAT AdapterFormat, 
-                                  D3DFORMAT BackBufferFormat, bool bWindowed, void *pUserContext )
-{
-    // Typically want to skip backbuffer formats that don't support alpha blending
-    IDirect3D9 *pD3D = DXUTGetD3DObject(); 
-    if( FAILED( pD3D->CheckDeviceFormat( pCaps->AdapterOrdinal, pCaps->DeviceType,
-                    AdapterFormat, D3DUSAGE_QUERY_POSTPIXELSHADER_BLENDING, 
-                    D3DRTYPE_TEXTURE, BackBufferFormat ) ) )
-        return false;
-
-    return true;
-}
-
-
-//--------------------------------------------------------------------------------------
-// Before a device is created, modify the device settings as needed
-//--------------------------------------------------------------------------------------
-bool CALLBACK ModifyDeviceSettings( DXUTDeviceSettings *pDeviceSettings, const D3DCAPS9 *pCaps, void *pUserContext )
-{
-    // For the first device created if its a REF device, optionally display a warning dialog box
-    static bool s_bFirstTime = true;
-    if( s_bFirstTime )
-    {
-        s_bFirstTime = false;
-        if( pDeviceSettings->DeviceType == D3DDEVTYPE_REF )
-            DXUTDisplaySwitchingToREFWarning();
-    }
-
-    return true;
-}
-
-
-//--------------------------------------------------------------------------------------
-// Create any D3DPOOL_MANAGED resources here 
-//--------------------------------------------------------------------------------------
-HRESULT CALLBACK OnCreateDevice( IDirect3DDevice9 *pd3dDevice, const D3DSURFACE_DESC *pBackBufferSurfaceDesc, void *pUserContext )
-{
-    HRESULT hr;
-
-//    V_RETURN( g_DialogResourceManager.OnCreateDevice( pd3dDevice ) );
-//    V_RETURN( g_SettingsDlg.OnCreateDevice( pd3dDevice ) );
-
-    // Initialize the fonts with scaled sizes
-	float textScale = GetTextScale();
-    V_RETURN( D3DXCreateFont( pd3dDevice, static_cast<int>(15 * textScale), 0, FW_BOLD, 1, FALSE, DEFAULT_CHARSET, 
-                              OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, 
-                              L"Arial", &g_pFont ) );
-
-    V_RETURN( D3DXCreateFont( pd3dDevice, static_cast<int>(25 * textScale), 0, FW_BOLD, 1, FALSE, DEFAULT_CHARSET, 
-                              OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, 
-                              L"Arial", &g_pFontLarge ) );
-
-    return S_OK;
-}
-
-
-//--------------------------------------------------------------------------------------
-// Create any D3DPOOL_DEFAULT resources here 
-//--------------------------------------------------------------------------------------
-HRESULT CALLBACK OnResetDevice( IDirect3DDevice9 *pd3dDevice, 
-                                const D3DSURFACE_DESC *pBackBufferSurfaceDesc, void *pUserContext )
-{
-    HRESULT hr;
-
-//    V_RETURN( g_DialogResourceManager.OnResetDevice() );
-//    V_RETURN( g_SettingsDlg.OnResetDevice() );
-
-    // Recreate fonts with proper scaling for new resolution
-	if( g_pFont )
-	{
-		g_pFont->Release();
-		g_pFont = NULL;
-	}
-	if( g_pFontLarge )
-	{
-		g_pFontLarge->Release();
-		g_pFontLarge = NULL;
-	}
-	
-	float textScale = GetTextScale();
-	V_RETURN( D3DXCreateFont( pd3dDevice, static_cast<int>(15 * textScale), 0, FW_BOLD, 1, FALSE, DEFAULT_CHARSET, 
-	                          OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, 
-	                          L"Arial", &g_pFont ) );
-	
-	V_RETURN( D3DXCreateFont( pd3dDevice, static_cast<int>(25 * textScale), 0, FW_BOLD, 1, FALSE, DEFAULT_CHARSET, 
-	                          OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, 
-	                          L"Arial", &g_pFontLarge ) );
-
-    // Create a sprite to help batch calls when drawing many lines of text
-    V_RETURN( D3DXCreateSprite( pd3dDevice, &g_pSprite ) );
-
-	if (FAILED(D3DXCreateTextureFromResource(pd3dDevice, NULL, L"ATLAS", &g_pAtlas)))
-	{
-		OutputDebugStringW(L"ERROR: Failed to create texture from ATLAS resource\n");
-		return E_FAIL;
-	}
-
-	InitAtlasCoord();
-
-	if ((hr = CreatePolygonVertexBuffer(pd3dDevice)) != S_OK)
-	{
-		OutputDebugStringW(L"ERROR: Failed to create polygon vertex buffer\n");
-		return hr;
-	}
-	if ((hr = CreateTrackVertexBuffer(pd3dDevice)) != S_OK)
-	{
-		OutputDebugStringW(L"ERROR: Failed to create track vertex buffer\n");
-		return hr;
-	}
-	if ((hr = CreateShadowVertexBuffer(pd3dDevice)) != S_OK)
-	{
-		OutputDebugStringW(L"ERROR: Failed to create shadow vertex buffer\n");
-		return hr;
-	}
-	if ((hr = CreateCarVertexBuffer(pd3dDevice)) != S_OK)
-	{
-		OutputDebugStringW(L"ERROR: Failed to create car vertex buffer\n");
-		return hr;
-	}
-	if ((hr = CreateCockpitVertexBuffer(pd3dDevice)) != S_OK)
-	{
-		OutputDebugStringW(L"ERROR: Failed to create cockpit vertex buffer\n");
-		return hr;
-	}
-
-	// Set the projection transform (view and world are updated per frame)
-    D3DXMATRIX matProj;
-	FLOAT fAspect = pBackBufferSurfaceDesc->Width / static_cast<FLOAT>(pBackBufferSurfaceDesc->Height);
-    D3DXMatrixPerspectiveFovLH( &matProj, D3DX_PI/4, fAspect, 0.5f, FURTHEST_Z );
-    pd3dDevice->SetTransform( D3DTS_PROJECTION, &matProj );
-
-    pd3dDevice->SetRenderState( D3DRS_ZENABLE,      TRUE );
-    pd3dDevice->SetRenderState( D3DRS_SHADEMODE,    D3DSHADE_FLAT );
-    pd3dDevice->SetRenderState( D3DRS_LIGHTING,     FALSE );
-
-	// Disable texture mapping by default (only DrawTrack() enables it)
-	pd3dDevice->SetTextureStageState( 0, D3DTSS_COLOROP, D3DTOP_DISABLE );
-
-	return S_OK;
-}
-#else
 // some helper functions....
 void CreateFonts()
 {
@@ -715,7 +545,6 @@ void CreateBuffers(IDirect3DDevice9 *pd3dDevice)
 		printf("Error creating CarVertexBuffer\n");
 
 }
-#endif	//!linux
 /*	======================================================================================= */
 /*	Function:		CalcTrackMenuViewpoint													*/
 /*																							*/
@@ -1025,11 +854,11 @@ static float lastFrame = 0.0f;
 		if (frameCount == 0)
 		{
 			frameCount = frameGap;
-			//DXUTPause( false, false );	//pausing doesn't work properly
+			// pause toggling here is intentionally disabled (caused timing issues)
 		}
 		else
 		{
-			//if (frameCount == frameGap-1) DXUTPause( true, true );	//pausing doesn't work properly
+			//if (frameCount == frameGap-1) pause on alternate frames (disabled)
 			return;
 		}
 	}
@@ -1199,7 +1028,7 @@ static float lastFrame = 0.0f;
 #define LEAGUEMENU 'L'
 #endif
 
-static void HandleTrackMenu( CDXUTTextHelper &txtHelper )
+static void HandleTrackMenu( TextHelper &txtHelper )
 	{
 	long i, track_number;
 	UINT firstMenuOption, lastMenuOption;
@@ -1214,7 +1043,7 @@ static void HandleTrackMenu( CDXUTTextHelper &txtHelper )
 	lastMenuOption = i + FIRSTMENU - 1;
 
 	// output instructions
-	const D3DSURFACE_DESC *pd3dsdBackBuffer = DXUTGetBackBufferSurfaceDesc();
+	const D3DSURFACE_DESC *pd3dsdBackBuffer = GetBackBufferSurfaceDesc();
 	txtHelper.SetInsertionPos( static_cast<int>((2+(wideScreen?10:0)) * textScale), static_cast<int>(pd3dsdBackBuffer->Height-15*8*textScale) );
 	txtHelper.DrawFormattedTextLine( L"Current track - " STRING L".  Press 'S' to select, Escape to quit", (TrackID == NO_TRACK ? L"None" : GetTrackName(TrackID)));
 	txtHelper.DrawTextLine( L"'L' to switch Super League On/Off");
@@ -1224,7 +1053,7 @@ static void HandleTrackMenu( CDXUTTextHelper &txtHelper )
 		if(keyPress == LEAGUEMENU) {
 			bSuperLeague = !bSuperLeague;
 			track_number = TrackID;
-			CreateCarVertexBuffer(DXUTGetD3DDevice());	// recreate car
+			CreateCarVertexBuffer(GetRenderDevice());	// recreate car
 		} else 
 			track_number = keyPress - firstMenuOption;	// start at 0
 
@@ -1237,7 +1066,7 @@ static void HandleTrackMenu( CDXUTTextHelper &txtHelper )
 			return;
 			}
 
-		if (CreateTrackVertexBuffer(DXUTGetD3DDevice()) != S_OK)
+		if (CreateTrackVertexBuffer(GetRenderDevice()) != S_OK)
 			{
 #if defined(DEBUG) || defined(_DEBUG)
 			fprintf(out, "Failed to create track vertex buffer %d\n", track_number);
@@ -1269,10 +1098,10 @@ static void HandleTrackMenu( CDXUTTextHelper &txtHelper )
 /*	Description:	Output track preview text												*/
 /*	======================================================================================= */
 
-static void HandleTrackPreview( CDXUTTextHelper &txtHelper )
+static void HandleTrackPreview( TextHelper &txtHelper )
 	{
 	// output instructions
-	const D3DSURFACE_DESC *pd3dsdBackBuffer = DXUTGetBackBufferSurfaceDesc();
+	const D3DSURFACE_DESC *pd3dsdBackBuffer = GetBackBufferSurfaceDesc();
 	float textScale = GetTextScale();
 	txtHelper.SetInsertionPos( static_cast<int>((2+(wideScreen?10:0)) * textScale), static_cast<int>(pd3dsdBackBuffer->Height-15*9*textScale) );
 	txtHelper.DrawFormattedTextLine( L"Selected track - " STRING L".  Press 'S' to start game", (TrackID == NO_TRACK ? L"None" : GetTrackName(TrackID)));
@@ -1296,7 +1125,7 @@ static void HandleTrackPreview( CDXUTTextHelper &txtHelper )
 		// initialise game data
 		ResetLapData(OPPONENT);
 		ResetLapData(PLAYER);
-		gameStartTime = DXUTGetTime();
+		gameStartTime = GetTimeSeconds();
 		gameEndTime = 0;
 		if(bSuperLeague) {
 			boostReserve = SuperBoost;
@@ -1335,26 +1164,17 @@ void RenderText( double fTime )
     // If NULL is passed in as the sprite object, then it will work fine however the 
     // pFont->DrawText() will not be batched together.  Batching calls will improve perf.
 	float textScale = GetTextScale();
-#ifdef linux
-	static
-#endif
-    CDXUTTextHelper txtHelper( g_pFont, g_pSprite, static_cast<int>(15 * textScale) );
+	static TextHelper txtHelper( g_pFont, g_pSprite, static_cast<int>(15 * textScale) );
 
     // Output statistics
     txtHelper.Begin();
 	txtHelper.SetForegroundColor( D3DXCOLOR( 1.0f, 1.0f, 0.0f, 1.0f ) );
-	if (bShowStats)
-	{
-		txtHelper.SetInsertionPos( static_cast<int>((2+(wideScreen?10:0)) * textScale), 0 );
-#ifndef linux
-		txtHelper.DrawTextLine( DXUTGetFrameStats(true) );
-		txtHelper.DrawTextLine( DXUTGetDeviceStats() );
-#else
-		
-		txtHelper.DrawFormattedTextLine( L"fTime: %0.1f  sin(fTime): %0.4f", fTime, sin(fTime) );
-#endif
+		if (bShowStats)
+		{
+			txtHelper.SetInsertionPos( static_cast<int>((2+(wideScreen?10:0)) * textScale), 0 );
+			txtHelper.DrawFormattedTextLine( L"fTime: %0.1f  sin(fTime): %0.4f", fTime, sin(fTime) );
 
-#if defined(DEBUG) || defined(_DEBUG)
+	#if defined(DEBUG) || defined(_DEBUG)
 		// Output VALUE1, VALUE, VALUE3
 		txtHelper.DrawFormattedTextLine( L"V1: %08x, V2: %08x, V3: %08x", VALUE1, VALUE2, VALUE3 );
 #else
@@ -1378,10 +1198,10 @@ void RenderText( double fTime )
 		case GAME_IN_PROGRESS:
 		case GAME_OVER:
 			// Show car speed, damage and race details
-			const D3DSURFACE_DESC *pd3dsdBackBuffer = DXUTGetBackBufferSurfaceDesc();
+			const D3DSURFACE_DESC *pd3dsdBackBuffer = GetBackBufferSurfaceDesc();
 			WCHAR lapText[3] = L"  ";
 			// Output opponent's name for four seconds at race start
-			if (((DXUTGetTime() - gameStartTime) < 4.0) && (opponentsID != NO_OPPONENT))
+			if (((GetTimeSeconds() - gameStartTime) < 4.0) && (opponentsID != NO_OPPONENT))
 			{
 				txtHelper.SetInsertionPos( static_cast<int>((250+(wideScreen?80:0)) * textScale), static_cast<int>(pd3dsdBackBuffer->Height-15*20*textScale) );
 				txtHelper.DrawFormattedTextLine( L"Opponent: " STRING, opponentNames[opponentsID] );
@@ -1408,11 +1228,11 @@ void RenderText( double fTime )
 				#ifdef linux
 				static
 				#endif
-				CDXUTTextHelper txtHelperLarge( g_pFontLarge, g_pSprite, static_cast<int>(25 * textScale) );
+				TextHelper txtHelperLarge( g_pFontLarge, g_pSprite, static_cast<int>(25 * textScale) );
 
 				txtHelperLarge.Begin();
 
-				double currentTime = DXUTGetTime(), diffTime;
+				double currentTime = GetTimeSeconds(), diffTime;
 				if (gameEndTime == 0.0)
 					gameEndTime = currentTime;
 
@@ -1632,301 +1452,6 @@ HRESULT hr;
 	}
 }
 
-#ifndef linux
-//--------------------------------------------------------------------------------------
-// Handle messages to the application 
-//--------------------------------------------------------------------------------------
-LRESULT CALLBACK MsgProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, 
-                          bool *pbNoFurtherProcessing, void *pUserContext )
-{
-	// Handle window resizing to preserve aspect ratio
-	if (uMsg == WM_SIZING)
-	{
-		RECT* pRect = (RECT*)lParam;
-		int width = pRect->right - pRect->left;
-		int height = pRect->bottom - pRect->top;
-		
-		// Preserve aspect ratio based on wideScreen setting
-		// wideScreen=1 means 16:10 (800:480), wideScreen=0 would be 4:3
-		float targetAspect = wideScreen ? (800.0f / 480.0f) : (4.0f / 3.0f);
-		float currentAspect = static_cast<float>(width) / static_cast<float>(height);
-		
-		// Adjust based on which edge is being dragged
-		if (currentAspect > targetAspect)
-		{
-			// Too wide, adjust width
-			int newWidth = static_cast<int>(height * targetAspect);
-			if (wParam == WMSZ_LEFT || wParam == WMSZ_TOPLEFT || wParam == WMSZ_BOTTOMLEFT)
-				pRect->left = pRect->right - newWidth;
-			else
-				pRect->right = pRect->left + newWidth;
-		}
-		else if (currentAspect < targetAspect)
-		{
-			// Too tall, adjust height
-			int newHeight = static_cast<int>(width / targetAspect);
-			if (wParam == WMSZ_TOP || wParam == WMSZ_TOPLEFT || wParam == WMSZ_TOPRIGHT)
-				pRect->top = pRect->bottom - newHeight;
-			else
-				pRect->bottom = pRect->top + newHeight;
-		}
-		
-		*pbNoFurtherProcessing = true;
-		return 0;
-	}
-	
-	return 0;
-}
-
-//--------------------------------------------------------------------------------------
-// As a convenience, DXUT inspects the incoming windows messages for
-// keystroke messages and decodes the message parameters to pass relevant keyboard
-// messages to the application.  The framework does not remove the underlying keystroke 
-// messages, which are still passed to the application's MsgProc callback.
-//--------------------------------------------------------------------------------------
-void CALLBACK KeyboardProc( UINT nChar, bool bKeyDown, bool bAltDown, void *pUserContext )
-{
-    if( bKeyDown )
-    {
-		keyPress = nChar;
-        switch( nChar )
-        {
-#if defined(DEBUG) || defined(_DEBUG)
-        case VK_F1:
-            bTestKey = !bTestKey;
-            break;
-#endif
-        case VK_F2:
-            ++bTrackDrawMode;
-			if (bTrackDrawMode > 1) bTrackDrawMode = 0;
-			DXUTReset3DEnvironment();
-            break;
-
-        case VK_F4:
-            NextSceneryType();
-            break;
-
-        case VK_F5:
-            bShowStats = !bShowStats;
-            break;
-
-        case VK_F6:
-            bPlayerPaused = !bPlayerPaused;
-            break;
-
-        case VK_F7:
-            bOpponentPaused = !bOpponentPaused;
-            break;
-
-		case VK_F9:
-			if (frameGap > 1) frameGap--;
-			break;
-
-		case VK_F10:
-			frameGap++;
-			break;
-
-#if defined(DEBUG) || defined(_DEBUG)
-		case VK_BACK:
-			bOutsideView = !bOutsideView;
-            break;
-#endif
-		case 'M':
-			if (GameMode != TRACK_MENU)
-			{
-				GameMode = TRACK_MENU;
-
-				opponentsID = NO_OPPONENT;
-
-				// reset all animated objects
-				ResetDrawBridge();
-			}
-            break;
-
-		case 'O':
-			bPaused = FALSE;
-            break;
-
-		case 'P':
-			bPaused = TRUE;
-            break;
-
-		case 'Z':
-			bNewGame = TRUE;		// for testing to try stopping car positioning bug
-            break;
-
-		// controls for Car Behaviour, Player 1
-        case VK_LEFT:
-            lastInput |= KEY_P1_LEFT;
-            break;
-
-        case VK_RIGHT:
-            lastInput |= KEY_P1_RIGHT;
-            break;
-
-        case VK_SPACE:
-            lastInput |= KEY_P1_BOOST;
-            break;
-
-		case VK_DOWN:
-            lastInput |= KEY_P1_BRAKE;
-            break;
-
-        case VK_UP:
-            lastInput |= KEY_P1_ACCEL;
-            break;
-        }
-
-#ifdef NOT_USED
-        switch( nChar )
-        {
-            case VK_LEFT: fEyeX -= 1000.0f; break;
-            case VK_RIGHT: fEyeX += 1000.0f; break;
-            case VK_UP: fEyeY -= 1000.0f; break;
-            case VK_DOWN: fEyeY += 1000.0f; break;
-            case VK_PRIOR: fEyeZ -= 1000.0f; break;	// pgup
-            case VK_NEXT: fEyeZ += 1000.0f; break;	// pgdn
-        }
-#endif
-    }
-	else
-	{
-		keyPress = '\0';
-        switch( nChar )
-        {
-		// controls for Car Behaviour, Player 1
-        case VK_LEFT:
-            lastInput &= ~KEY_P1_LEFT;
-            break;
-
-        case VK_RIGHT:
-            lastInput &= ~KEY_P1_RIGHT;
-            break;
-
-        case VK_SPACE:	// couldn't find VK_ definition for HASH key
-            lastInput &= ~KEY_P1_BOOST;
-            break;
-
-		case VK_DOWN:
-            lastInput &= ~KEY_P1_BRAKE;
-            break;
-
-        case VK_UP:
-            lastInput &= ~KEY_P1_ACCEL;
-            break;
-		}
-	}
-}
-
-
-//--------------------------------------------------------------------------------------
-// Release resources created in the OnResetDevice callback here 
-//--------------------------------------------------------------------------------------
-void CALLBACK OnLostDevice( void *pUserContext )
-{
-//    g_DialogResourceManager.OnLostDevice();
-//    g_SettingsDlg.OnLostDevice();
-//    CDXUTDirectionWidget::StaticOnLostDevice();
-    if( g_pFont )
-        g_pFont->OnLostDevice();
-    if( g_pFontLarge )
-        g_pFontLarge->OnLostDevice();
-    SAFE_RELEASE(g_pSprite);
-
-	FreePolygonVertexBuffer();
-	FreeTrackVertexBuffer();
-	FreeShadowVertexBuffer();
-	FreeCarVertexBuffer();
-	FreeCockpitVertexBuffer();
-
-	if (g_pAtlas) g_pAtlas->Release(), g_pAtlas = NULL;
-}
-
-
-//--------------------------------------------------------------------------------------
-// Release resources created in the OnCreateDevice callback here
-//--------------------------------------------------------------------------------------
-void CALLBACK OnDestroyDevice( void *pUserContext )
-{
-//    g_DialogResourceManager.OnDestroyDevice();
-//    g_SettingsDlg.OnDestroyDevice();
-    SAFE_RELEASE(g_pFont);
-    SAFE_RELEASE(g_pFontLarge);
-
-	FreePolygonVertexBuffer();
-	FreeTrackVertexBuffer();
-	FreeShadowVertexBuffer();
-	FreeCarVertexBuffer();
-	FreeCockpitVertexBuffer();
-}
-
-
-//--------------------------------------------------------------------------------------
-// Initialize everything and go into a render loop
-//--------------------------------------------------------------------------------------
-INT WINAPI WinMain( HINSTANCE, HINSTANCE, LPSTR, int )
-{
-    // Enable run-time memory check for debug builds.
-	wchar_t maintitle[50] = {0};
-	wsprintf(maintitle, L"StuntCarRemake v%d.%02d.%02d", V_MAJOR, V_MINOR, V_PATCH);
-#if defined(DEBUG) | defined(_DEBUG)
-    _CrtSetDbgFlag( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
-#endif
-
-    // Set the callback functions
-    DXUTSetCallbackDeviceCreated( OnCreateDevice );
-    DXUTSetCallbackDeviceReset( OnResetDevice );
-    DXUTSetCallbackDeviceLost( OnLostDevice );
-    DXUTSetCallbackDeviceDestroyed( OnDestroyDevice );
-    DXUTSetCallbackMsgProc( MsgProc );
-    DXUTSetCallbackKeyboard( KeyboardProc );
-    DXUTSetCallbackFrameRender( OnFrameRender );
-    DXUTSetCallbackFrameMove( OnFrameMove );
-   
-    // Perform any application-level initialization here
-	if (!InitialiseData())
-	    return DXUTGetExitCode();
-
-    // Initialize DXUT and create the desired Win32 window and Direct3D device for the application
-    DXUTInit( true, true, true, false ); // Parse the command line, handle the default hotkeys, show msgboxes, don't handle Alt-Enter
-    DXUTSetCursorSettings( true, true ); // Show the cursor and clip it when in full screen
-    DXUTCreateWindow( maintitle );
-	
-	// Get screen resolution and set initial window size to roughly half
-	int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-	int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-	int initialWidth = screenWidth / 2;
-	int initialHeight = screenHeight / 2;
-	// Maintain 16:10 aspect ratio
-	if (initialWidth * 10 != initialHeight * 16) {
-		initialHeight = (initialWidth * 10) / 16;
-	}
-	
-    DXUTCreateDevice( D3DADAPTER_DEFAULT, true, initialWidth, initialHeight, IsDeviceAcceptable, ModifyDeviceSettings );
-	wideScreen = 1;
-
-//	DXUTSetConstantFrameTime( true, 0.033f );	// Doesn't seem to work
-
-	//
-	//	Initialise sound objects
-	//
-	if (!DSInit())
-		return FALSE;
-
-	if (!DSSetMode())
-		return FALSE;
-
-    // Start the render loop
-    DXUTMainLoop();
-
-    // Perform any application-level cleanup here
-	FreeData();
-
-    return DXUTGetExitCode();
-}
-
-#else
-
 bool process_events()
 {
     SDL_Event event;
@@ -1957,7 +1482,7 @@ bool process_events()
 				case SDLK_F2:
 					++bTrackDrawMode;
 					if (bTrackDrawMode > 1) bTrackDrawMode = 0;
-					DXUTReset3DEnvironment();
+					ResetRenderEnvironment();
 					break;
 
 				case SDLK_F4:
@@ -2111,7 +1636,7 @@ void em_main_loop()
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	double fTime = DXUTGetTime();
+	double fTime = GetTimeSeconds();
 	process_events();	// no quit...
 	OnFrameMove( &pd3dDevice, fTime, fTime - fLastTime, NULL );
 	OnFrameRender( &pd3dDevice, fTime, fTime - fLastTime, NULL );
@@ -2438,15 +1963,15 @@ int main(int argc, const char** argv)
 
 	glClearColor(0,0,0,1);
 #ifdef __EMSCRIPTEN__
-	fLastTime = DXUTGetTime();
+	fLastTime = GetTimeSeconds();
 	emscripten_set_main_loop(em_main_loop, 0, 1);
 #else
 	bool run = true;
-	double fLastTime = DXUTGetTime();
+	double fLastTime = GetTimeSeconds();
     while( run ) {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		double fTime = DXUTGetTime();
+		double fTime = GetTimeSeconds();
 		run = process_events();
 		OnFrameMove( &pd3dDevice, fTime, fTime - fLastTime, NULL );
         OnFrameRender( &pd3dDevice, fTime, fTime - fLastTime, NULL );
@@ -2474,4 +1999,3 @@ int main(int argc, const char** argv)
 	
 	exit(0);
 }
-#endif

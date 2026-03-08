@@ -16,10 +16,12 @@ cmake -S . -B build
 cmake --build build -j
 ```
 
-Requirements:
-- SDL2
-- SDL2_ttf
+Native desktop builds fetch SDL2, SDL2_ttf and glm directly from source via CMake `FetchContent`.
+You only need:
+- CMake
+- a C++ compiler toolchain
 - OpenGL development headers/libraries
+- internet access on first configure
 
 ### Windows (Visual Studio Generator)
 
@@ -27,6 +29,15 @@ Requirements:
 cmake -S . -B build
 cmake --build build --config Release
 ```
+
+### Web (Emscripten)
+
+```bash
+emcmake cmake -S . -B build-web
+cmake --build build-web -j
+```
+
+Web builds use Emscripten SDL ports (`-s USE_SDL=2 -s USE_SDL_TTF=2`) and do not fetch SDL dependencies from source.
 
 You can play Emscripten version, built using [gl4es](https://github.com/ptitSeb/gl4es) here: [Web version](http://ptitseb.github.io/stuntcarremake/)
 

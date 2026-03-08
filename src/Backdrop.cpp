@@ -7,7 +7,7 @@
 /*	============= */
 /*	Include files */
 /*	============= */
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include "StuntCarRacer.h"
 #include "Backdrop.h"
@@ -1037,3 +1037,4 @@ store_line:
 	*x2ptr = x2; *y2ptr = y2;
 	return(on_screen);
 	}
+

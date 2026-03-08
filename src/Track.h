@@ -6,7 +6,7 @@
 /*	Include files */
 /*	============= */
 #include "3D_Engine.h"
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 /*	========= */
 /*	Constants */
@@ -108,3 +108,4 @@ extern void MoveDrawBridge ( void );
 extern void ResetDrawBridge( void );
 
 #endif	/* _TRACK */
+

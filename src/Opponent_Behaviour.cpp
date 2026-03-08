@@ -8,7 +8,7 @@
 /*	============= */
 /*	Include files */
 /*	============= */
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include <stdlib.h>
 
@@ -2245,3 +2245,4 @@ long CalculateOpponentsDistance (void)
 
 	return(dist);
 	}
+

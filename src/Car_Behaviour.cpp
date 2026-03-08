@@ -43,7 +43,7 @@
 /*	============= */
 /*	Include files */
 /*	============= */
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include <stdlib.h>
 
@@ -2196,7 +2196,7 @@ static void CarCollisionDetection (void)
 	if (amiga_volume < 28) amiga_volume = 28;
 	if (amiga_volume > 64) amiga_volume = 64;
 
-	GroundedSoundBuffer->SetVolume(AmigaVolumeToDirectX(amiga_volume));
+	GroundedSoundBuffer->SetVolume(AmigaVolumeToMixerGain(amiga_volume));
 
 	if (grounded_delay == 0)
 		{
@@ -3505,12 +3505,12 @@ static void CalcCurveMeasurements (long piece,
 
 
 /*	======================================================================================= */
-/*	Function:		AmigaVolumeToDirectX													*/
+/*	Function:		AmigaVolumeToMixerGain													*/
 /*																							*/
-/*	Description:	Convert an Amiga volume level to a value for use with DirectX			*/
+/*	Description:	Convert an Amiga volume level to mixer gain units			*/
 /*	======================================================================================= */
 
-long AmigaVolumeToDirectX (long amiga_volume)
+long AmigaVolumeToMixerGain (long amiga_volume)
 	{
 	static long first_time = TRUE;
 	static long directx_volume[MAX_AMIGA_VOLUME+1];		// range 0 to MAX
@@ -3541,7 +3541,7 @@ long AmigaVolumeToDirectX (long amiga_volume)
 		amiga_volume = MAX_AMIGA_VOLUME;
 		}
 
-	// return DirectX volume
+	// return mixer gain value
 	return(directx_volume[amiga_volume]);
 	}
 
@@ -4122,7 +4122,7 @@ PlayCreakSound:
 	if (amiga_volume < 28) amiga_volume = 28;
 	if (amiga_volume > 64) amiga_volume = 64;
 
-	CreakSoundBuffer->SetVolume(AmigaVolumeToDirectX(amiga_volume));
+	CreakSoundBuffer->SetVolume(AmigaVolumeToMixerGain(amiga_volume));
 	//CreakSoundBuffer->SetCurrentPosition(0);
 	CreakSoundBuffer->Play(NULL,NULL,NULL);	// not looping
 	return;
@@ -4437,3 +4437,4 @@ void CloseAmigaRecording( void )
 	}
 }
 #endif
+

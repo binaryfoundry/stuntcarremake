@@ -66,3 +66,4 @@ extern void SetTextureColour (long colour_index);
 extern long VALUE1, VALUE2, VALUE3;
 
 #endif	/* _STUNT_CAR_RACER */
+

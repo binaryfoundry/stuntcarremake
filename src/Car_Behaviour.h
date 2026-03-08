@@ -54,7 +54,7 @@ extern void CarBehaviour (DWORD input,
 
 extern void LimitViewpointY (long *y);
 
-extern long AmigaVolumeToDirectX (long amiga_volume);
+extern long AmigaVolumeToMixerGain (long amiga_volume);
 
 extern long CalculateDisplaySpeed (void);
 
@@ -82,3 +82,4 @@ extern void CloseAmigaRecording( void );
 #endif
 
 #endif	/* _CAR_BEHAVIOUR */
+

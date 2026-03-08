@@ -147,3 +147,4 @@ extern void DrawPolygon( POINT *pptr,
 extern void DrawFilledRectangle( long x1, long y1, long x2, long y2, DWORD colour );
 
 #endif	/* _3D_ENGINE */
+

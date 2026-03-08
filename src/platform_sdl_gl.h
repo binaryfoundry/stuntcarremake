@@ -1,10 +1,6 @@
-#ifndef _DX_LINUX_H_
-#define _DX_LINUX_H_
-#ifdef HAVE_GLES
-#include <GLES/gl.h>
-#else
-#include <GL/gl.h>
-#endif
+#ifndef _PLATFORM_SDL_GL_H_
+#define _PLATFORM_SDL_GL_H_
+
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,9 +9,30 @@
 #include <time.h>
 #include <string.h>
 #ifdef USE_SDL2
+#if __has_include(<SDL.h>)
+#include <SDL.h>
+#include <SDL_ttf.h>
+#elif __has_include(<SDL2/SDL.h>)
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #else
+#error "SDL2 headers not found"
+#endif
+
+#ifdef HAVE_GLES
+#include <SDL_opengles2.h>
+#else
+#if defined(_WIN32) && !defined(APIENTRY)
+#define APIENTRY __stdcall
+#endif
+#include <SDL_opengl.h>
+#endif
+#else
+#ifdef HAVE_GLES
+#include <GLES/gl.h>
+#else
+#include <GL/gl.h>
+#endif
 #include <SDL/SDL.h>
 #include <SDL/SDL_ttf.h>
 #include <SDL/SDL_image.h>
@@ -479,7 +496,7 @@ HRESULT DirectSoundCreate8(LPCGUID lpcGuidDevice, LPDIRECTSOUND8 * ppDS8, LPUNKN
 
 #define UINT uint32_t
 
-#define DXUTGetHWND() 0
+#define GetWindowHandle() 0
 
 /*=============================================================
  * 
@@ -670,6 +687,22 @@ typedef enum D3DTEXTURESTAGESTATETYPE {
   D3DTSS_FORCE_DWORD            = 0x7fffffff
 } D3DTEXTURESTAGESTATETYPE, *LPD3DTEXTURESTAGESTATETYPE;
 
+typedef enum D3DSAMPLERSTATETYPE {
+  D3DSAMP_ADDRESSU                = 13,
+  D3DSAMP_ADDRESSV                = 14,
+  D3DSAMP_ADDRESSW                = 15,
+  D3DSAMP_FORCE_DWORD             = 0x7fffffff
+} D3DSAMPLERSTATETYPE, *LPD3DSAMPLERSTATETYPE;
+
+typedef enum D3DTEXTUREADDRESS {
+  D3DTADDRESS_WRAP                = 1,
+  D3DTADDRESS_MIRROR              = 2,
+  D3DTADDRESS_CLAMP               = 3,
+  D3DTADDRESS_BORDER              = 4,
+  D3DTADDRESS_MIRRORONCE          = 5,
+  D3DTADDRESS_FORCE_DWORD         = 0x7fffffff
+} D3DTEXTUREADDRESS, *LPD3DTEXTUREADDRESS;
+
 typedef enum D3DTEXTUREOP { 
   D3DTOP_DISABLE                    = 1,
   D3DTOP_SELECTARG1                 = 2,
@@ -814,6 +847,7 @@ public:
 	HRESULT SetRenderState(D3DRENDERSTATETYPE State, int Value);
 	HRESULT DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType,UINT StartVertex,UINT PrimitiveCount);
 	HRESULT SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value);
+	HRESULT SetSamplerState(DWORD Sampler, D3DSAMPLERSTATETYPE Type, DWORD Value);
 	HRESULT SetTexture(DWORD Sampler, IDirect3DTexture9 *pTexture);
   HRESULT Clear(DWORD Count, const D3DRECT *pRects,DWORD Flags, D3DCOLOR Color, float Z, DWORD Stencil);
   HRESULT BeginScene() {return S_OK;};
@@ -837,11 +871,11 @@ private:
   DWORD     fvf;
 };
 
-class CDXUTTextHelper
+class TextHelper
 {
 public:
-	CDXUTTextHelper(TTF_Font* font, GLuint sprite, int size);
-	~CDXUTTextHelper();
+	TextHelper(TTF_Font* font, GLuint sprite, int size);
+	~TextHelper();
   void SetInsertionPos(int x, int y);
   void DrawTextLine(const wchar_t* line);
   void DrawFormattedTextLine(const wchar_t* line, ...);
@@ -860,11 +894,11 @@ private:
   int         m_sizew, m_sizeh;
 };
 
-IDirect3DDevice9 *DXUTGetD3DDevice();
+IDirect3DDevice9 *GetRenderDevice();
 
-const D3DSURFACE_DESC * DXUTGetBackBufferSurfaceDesc();
+const D3DSURFACE_DESC * GetBackBufferSurfaceDesc();
 
-DOUBLE DXUTGetTime();
+DOUBLE GetTimeSeconds();
 
 #define StringCchPrintf swprintf
 // V macro should test the result...
@@ -872,7 +906,7 @@ DOUBLE DXUTGetTime();
 #define SUCCEEDED(a) a == S_OK
 #define FAILED(a) a != S_OK
 
-void DXUTReset3DEnvironment();
+void ResetRenderEnvironment();
 
 #define mmioFOURCC(ch0, ch1, ch2, ch3) \
     MAKEFOURCC(ch0, ch1, ch2, ch3)
@@ -885,4 +919,5 @@ void DXUTReset3DEnvironment();
 
 #define OutputDebugStringW(A) printf("%S", A)
 
-#endif //_DX_LINUX_H_
+#endif //_PLATFORM_SDL_GL_H_
+

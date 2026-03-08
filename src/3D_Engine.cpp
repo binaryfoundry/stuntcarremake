@@ -7,7 +7,7 @@
 /*	============= */
 /*	Include files */
 /*	============= */
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include "StuntCarRacer.h"
 #include "3D_Engine.h"
@@ -1036,7 +1036,7 @@ void DrawPolygon( POINT *pptr,
 				  long sides)
 {
 long i;
-IDirect3DDevice9 *pd3dDevice = DXUTGetD3DDevice();
+IDirect3DDevice9 *pd3dDevice = GetRenderDevice();
 
 TRANSFORMEDVERTEX *pVertices;
 
@@ -1097,7 +1097,7 @@ void DrawFilledRectangle( long x1, long y1, long x2, long y2, DWORD colour )
 #else
 HRESULT hr;
 D3DRECT rect;
-IDirect3DDevice9 *pd3dDevice = DXUTGetD3DDevice();
+IDirect3DDevice9 *pd3dDevice = GetRenderDevice();
 
 	rect.x1 = x1;
 	rect.y1 = y1;
@@ -1108,3 +1108,4 @@ IDirect3DDevice9 *pd3dDevice = DXUTGetD3DDevice();
 #endif
 	return;
 }
+

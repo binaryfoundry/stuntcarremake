@@ -7,7 +7,7 @@
 /*	============= */
 /*	Include files */
 /*	============= */
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include "Car.h"
 #include "StuntCarRacer.h"
@@ -953,3 +953,4 @@ void DrawCockpit (IDirect3DDevice9 *pd3dDevice)
 		glEnable(GL_MULTISAMPLE);
 #endif
 }
+

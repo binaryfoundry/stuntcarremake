@@ -1,4 +1,4 @@
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 #include "Atlas.h"
 
 float atlas_tx1[eLAST] = {0};
@@ -74,3 +74,4 @@ void InitAtlasCoord() {
     }
 
 }
+

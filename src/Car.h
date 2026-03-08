@@ -2,7 +2,7 @@
 #ifndef	_CAR
 #define	_CAR
 
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 /*	========= */
 /*	Constants */
@@ -61,3 +61,4 @@ extern void FreeCockpitVertexBuffer (void);
 extern void DrawCockpit (IDirect3DDevice9 *pd3dDevice);
 
 #endif	/* _CAR */
+

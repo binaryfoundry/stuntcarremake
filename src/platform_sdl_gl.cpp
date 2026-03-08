@@ -1,10 +1,10 @@
 #ifdef linux
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 // use a light version of stb_image
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-extern bool wideScreen;
+extern int wideScreen;
 
 const char* BitMapRessourceName(const char* name)
 {
@@ -726,19 +726,44 @@ HRESULT IDirect3DDevice9::SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATE
 	return S_OK;
 }
 
+HRESULT IDirect3DDevice9::SetSamplerState(DWORD Sampler, D3DSAMPLERSTATETYPE Type, DWORD Value)
+{
+	GLint wrap = GL_REPEAT;
+	switch (Value)
+	{
+		case D3DTADDRESS_CLAMP:
+			wrap = GL_CLAMP_TO_EDGE;
+			break;
+#ifdef GL_MIRRORED_REPEAT
+		case D3DTADDRESS_MIRROR:
+			wrap = GL_MIRRORED_REPEAT;
+			break;
+#endif
+		case D3DTADDRESS_WRAP:
+		default:
+			wrap = GL_REPEAT;
+			break;
+	}
+
+	switch (Type)
+	{
+		case D3DSAMP_ADDRESSU:
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+			break;
+		case D3DSAMP_ADDRESSV:
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+			break;
+		default:
+			break;
+	}
+
+	return S_OK;
+}
+
 HRESULT IDirect3DDevice9::SetTexture(DWORD Sampler, IDirect3DTexture9 *pTexture)
 {
-	if(Sampler) {
-		glActiveTexture(GL_TEXTURE0+Sampler);
-		glClientActiveTexture(GL_TEXTURE0+Sampler);
-	}
-
+	(void)Sampler;
 	pTexture->Bind();
-
-	if(Sampler) {
-		glActiveTexture(GL_TEXTURE0);
-		glClientActiveTexture(GL_TEXTURE0);
-	}
 	return S_OK;
 }
 
@@ -811,7 +836,7 @@ HRESULT IDirect3DVertexBuffer9::Release() {
 }
 
 
-CDXUTTextHelper::CDXUTTextHelper(TTF_Font* font, GLuint sprite, int size) : 
+TextHelper::TextHelper(TTF_Font* font, GLuint sprite, int size) : 
 	m_sprite(sprite), m_size(size), m_posx(0), m_posy(0)
 {
 	// set colors
@@ -847,18 +872,18 @@ CDXUTTextHelper::CDXUTTextHelper(TTF_Font* font, GLuint sprite, int size) :
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-CDXUTTextHelper::~CDXUTTextHelper()
+TextHelper::~TextHelper()
 {
 	glDeleteTextures(1, &m_texture);
 }
 
-void CDXUTTextHelper::SetInsertionPos(int x, int y)
+void TextHelper::SetInsertionPos(int x, int y)
 {
 	m_posx = x;
 	m_posy = y;
 }
 
-void CDXUTTextHelper::DrawTextLine(const wchar_t* line)
+void TextHelper::DrawTextLine(const wchar_t* line)
 {
 	// Draw it
 	glDisable(GL_DEPTH_TEST);
@@ -892,7 +917,7 @@ void CDXUTTextHelper::DrawTextLine(const wchar_t* line)
 
 }
 
-void CDXUTTextHelper::DrawFormattedTextLine(const wchar_t* line, ...)
+void TextHelper::DrawFormattedTextLine(const wchar_t* line, ...)
 {
 	wchar_t buff[1000];
 	va_list args;
@@ -902,7 +927,7 @@ void CDXUTTextHelper::DrawFormattedTextLine(const wchar_t* line, ...)
 	va_end (args);
 }
 
-void CDXUTTextHelper::SetForegroundColor(D3DXCOLOR clr)
+void TextHelper::SetForegroundColor(D3DXCOLOR clr)
 {
 	m_forecol[0] = clr.r;
 	m_forecol[1] = clr.g;
@@ -911,7 +936,7 @@ void CDXUTTextHelper::SetForegroundColor(D3DXCOLOR clr)
 }
 
 static IDirect3DDevice9* device = NULL;
-IDirect3DDevice9 *DXUTGetD3DDevice()
+IDirect3DDevice9 *GetRenderDevice()
 {
 	if (!device)
 		device = new IDirect3DDevice9();
@@ -919,7 +944,7 @@ IDirect3DDevice9 *DXUTGetD3DDevice()
 }
 
 static D3DSURFACE_DESC d3dsurface_desc = {0}; 
-const D3DSURFACE_DESC * DXUTGetBackBufferSurfaceDesc()
+const D3DSURFACE_DESC * GetBackBufferSurfaceDesc()
 {
 	/*int vp[4];
 	glGetIntegerv(GL_VIEWPORT, vp);
@@ -930,14 +955,15 @@ const D3DSURFACE_DESC * DXUTGetBackBufferSurfaceDesc()
 	return &d3dsurface_desc;
 }
 
-DOUBLE DXUTGetTime()
+DOUBLE GetTimeSeconds()
 {
 	return ((DOUBLE)SDL_GetTicks())/1000.0;
 }
 
-void DXUTReset3DEnvironment()
+void ResetRenderEnvironment()
 {
 	// NOTHING?
 }
 
 #endif
+

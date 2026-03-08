@@ -1,6 +1,6 @@
 #ifdef linux
 
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include <algorithm>
 #include <cmath>
@@ -374,3 +374,4 @@ void sound_release_buffer(sound_buffer_t* buffer)
 }
 
 #endif
+

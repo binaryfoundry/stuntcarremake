@@ -29,3 +29,4 @@ extern long CalculateIfWinning( long start_finish_piece );
 extern long CalculateOpponentsDistance (void);
 
 #endif	/* _OPPONENT_BEHAVIOUR */
+

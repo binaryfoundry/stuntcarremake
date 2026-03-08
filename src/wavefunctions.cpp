@@ -2,7 +2,7 @@
 /*	============= */
 /*	Include files */
 /*	============= */
-#include "dx_linux.h"
+#include "platform_sdl_gl.h"
 
 #include "wavefunctions.h"
 
@@ -228,3 +228,4 @@ BOOL UnpackWAVChunk( void *pRIFFBytes, LPWAVEFORMATEX *lpwfmx, LPBYTE *lpChunkDa
 		} // while dwChunkBitsPtr
 	return FALSE;
 	}
+

@@ -21,3 +21,4 @@ extern void DrawBackdrop( long viewpoint_y,
 extern void NextSceneryType( void );
 
 #endif	/* _BACKDROP */
+
