@@ -42,6 +42,9 @@ static void DrawHorizon(long viewpoint_y, long viewpoint_x_angle, long viewpoint
 
 static void DrawScenery(long viewpoint_y, long viewpoint_x_angle, long viewpoint_y_angle, long viewpoint_z_angle);
 
+static long BuildGroundPlanePolygon(long x1, long y1, long x2, long y2, long screen_width, long screen_height,
+                                    long upside_down, POINT* out_points);
+
 static long ClipLine(long* x1ptr, long* y1ptr, long* x2ptr, long* y2ptr, long screen_width, long screen_height);
 
 /*    ======================================================================================= */
@@ -93,7 +96,7 @@ static void DrawHorizon(long viewpoint_y, long viewpoint_x_angle, long viewpoint
     long x, y, z, y_adjust;
     long trans_x, trans_y, trans_z;
     long screen_width, screen_height;
-    long x1, y1, x2, y2, xs, xl, ys, yl;
+    long x1, y1, x2, y2;
 
     // set up two co-ordinates defining horizon line
     COORD_3D plane[2];
@@ -176,7 +179,7 @@ static void DrawHorizon(long viewpoint_y, long viewpoint_x_angle, long viewpoint
     long min_y = 0;
     long max_x = screen_width - 1;
     long max_y = screen_height - 1;
-    long on_screen, draw, ytop = 0, ybottom = 0, colour_index = 0;
+    long on_screen, colour_index = SKY_COLOUR;
 
     if ((x1 > x2) || ((x1 == x2) && (y1 > y2)))
         upside_down = (!upside_down);
@@ -186,91 +189,22 @@ static void DrawHorizon(long viewpoint_y, long viewpoint_x_angle, long viewpoint
     //fprintf(out, "upside_down = %d, on_screen = %d\n", upside_down, on_screen);
     //fprintf(out, "clipped (x1,y1) = (%d,%d), (x2,y2) = (%d,%d)\n\n", x1, y1, x2, y2);
 
-    // get smallest and largest y
-    if (y2 < y1) {
-        xs = x2;
-        ys = y2;
-        xl = x1;
-        yl = y1;
-    } else {
-        xs = x1;
-        ys = y1;
-        xl = x2;
-        yl = y2;
-    }
-
     // special check for when line has been clipped to a single
     // pixel (i.e. one of the four corners of the screen)
-    if ((xs == xl) && (ys == yl))
+    if ((x1 == x2) && (y1 == y2))
         on_screen = FALSE;
 
     if (on_screen) {
-        // draw top rectangle
-        draw = FALSE;
+        POINT points[MAX_POLY_SIDES];
+        long sides;
 
-        if (!upside_down) {
-            colour_index = SKY_COLOUR;
+        // Sky fills the screen, then a clipped ground half-plane is overlaid.
+        DrawFilledRectangle(min_x, min_y, max_x, max_y, SCRGB(SKY_COLOUR));
 
-            if (ys != yl) {
-                ytop = 0;
-                if ((xl > min_x) && (xl < max_x)) // if not at either edge
-                    ybottom = yl;
-                else
-                    ybottom = yl - 1;
-
-                draw = TRUE;
-            } else // ys == yl
-                if (ys > 0) {
-                    ytop = 0;
-                    if (((xs == min_x) && (xl == max_x)) || ((xs == max_x) && (xl == min_x))) // if at both edges
-                        ybottom = ys - 1;
-                    else
-                        ybottom = ys;
-
-                    draw = TRUE;
-                }
-        } else // upside down
-        {
-            colour_index = GROUND_COLOUR;
-
-            if (ys != yl) {
-                if (ys > 0) {
-                    ytop = 0;
-                    ybottom = ys - 1;
-
-                    draw = TRUE;
-                }
-            } else // ys == yl
-            {
-                if (((xs == min_x) && (xl == max_x)) || ((xs == max_x) && (xl == min_x))) // if at both edges
-                {
-                    ytop = 0;
-                    ybottom = ys;
-
-                    draw = TRUE;
-                }
-            }
-        }
-
-        if (draw) {
-            DrawFilledRectangle(min_x, ytop, max_x, ybottom, SCRGB(colour_index));
-        }
-
-        // draw bottom rectangle
-        // simply fill the area that the above rectangle missed
-        if (colour_index == SKY_COLOUR)
-            colour_index = GROUND_COLOUR;
-        else
-            colour_index = SKY_COLOUR;
-
-        if (draw) // if previous rectangle was drawn
-        {
-            if (ybottom < max_y) {
-                DrawFilledRectangle(min_x, ybottom + 1, max_x, max_y, SCRGB(colour_index));
-            }
-        } else {
-            DrawFilledRectangle(min_x, min_y, max_x, max_y, SCRGB(colour_index));
-        }
+        sides = BuildGroundPlanePolygon(x1, y1, x2, y2, screen_width, screen_height, upside_down, points);
+        SetTextureColour(GROUND_COLOUR);
+        if (sides >= 3)
+            DrawPolygon(points, sides);
     } else // horizon line is off screen
     {
         long off_top = FALSE, off_bottom = FALSE;
@@ -311,69 +245,6 @@ static void DrawHorizon(long viewpoint_y, long viewpoint_x_angle, long viewpoint
         }
 
         DrawFilledRectangle(min_x, min_y, max_x, max_y, SCRGB(colour_index));
-    }
-
-    // draw sloping ground section
-    if ((on_screen) && (y1 != y2)) {
-        long sides = 0;
-        POINT points[MAX_POLY_SIDES];
-
-        if (y1 < y2) {
-            // ground on left area of screen
-
-            // 17/02/1999 - add one to y2 because Direct3D doesn't include last pixel
-            // (D3DRENDERSTATE_LASTPIXEL doesn't seem to have any effect)
-            ++y2;
-
-            if (x1 > min_x) {
-                points[sides].x = min_x;
-                points[sides].y = y1;
-                sides++;
-            }
-
-            points[sides].x = x1;
-            points[sides].y = y1;
-            sides++;
-            points[sides].x = x2;
-            points[sides].y = y2;
-            sides++;
-
-            if (x2 > min_x) {
-                points[sides].x = min_x;
-                points[sides].y = y2;
-                sides++;
-            }
-        } else {
-            // ground on right area of screen
-
-            // 17/02/1999 - add one to y1, max_x because Direct3D doesn't include last pixel
-            // (D3DRENDERSTATE_LASTPIXEL doesn't seem to have any effect)
-            ++y1;
-            ++max_x;
-
-            if (x1 < max_x) {
-                points[sides].x = max_x;
-                points[sides].y = y1;
-                sides++;
-            }
-
-            points[sides].x = x1;
-            points[sides].y = y1;
-            sides++;
-            points[sides].x = x2;
-            points[sides].y = y2;
-            sides++;
-
-            if (x2 < max_x) {
-                points[sides].x = max_x;
-                points[sides].y = y2;
-                sides++;
-            }
-        }
-
-        SetTextureColour(GROUND_COLOUR);
-        if (sides >= 3)
-            DrawPolygon(points, sides);
     }
 }
 
@@ -689,6 +560,91 @@ static void DrawScenery(long viewpoint_y, long viewpoint_x_angle, long viewpoint
                 DrawPolygon(points, sides);
         }
     }
+}
+
+static long BuildGroundPlanePolygon(long x1, long y1, long x2, long y2, long screen_width, long screen_height,
+                                    long upside_down, POINT* out_points) {
+    typedef struct {
+        float x;
+        float y;
+    } FPOINT;
+
+    FPOINT input[MAX_POLY_SIDES];
+    FPOINT output[MAX_POLY_SIDES];
+    long input_count = 4;
+    long output_count = 0;
+    long i;
+
+    const float a = static_cast<float>(y1 - y2);
+    const float b = static_cast<float>(x2 - x1);
+    const float c = static_cast<float>(x1 * y2 - x2 * y1);
+
+    const float ref_x = static_cast<float>(screen_width / 2);
+    const float ref_y = upside_down ? 0.0f : static_cast<float>(screen_height - 1);
+    const bool keep_positive = ((a * ref_x) + (b * ref_y) + c) >= 0.0f;
+
+    input[0].x = 0.0f;
+    input[0].y = 0.0f;
+    input[1].x = static_cast<float>(screen_width - 1);
+    input[1].y = 0.0f;
+    input[2].x = static_cast<float>(screen_width - 1);
+    input[2].y = static_cast<float>(screen_height - 1);
+    input[3].x = 0.0f;
+    input[3].y = static_cast<float>(screen_height - 1);
+
+    for (i = 0; i < input_count; ++i) {
+        const FPOINT s = input[i];
+        const FPOINT e = input[(i + 1) % input_count];
+
+        const float ds = (a * s.x) + (b * s.y) + c;
+        const float de = (a * e.x) + (b * e.y) + c;
+        const bool s_inside = keep_positive ? (ds >= 0.0f) : (ds <= 0.0f);
+        const bool e_inside = keep_positive ? (de >= 0.0f) : (de <= 0.0f);
+
+        if (s_inside && e_inside) {
+            if (output_count < MAX_POLY_SIDES)
+                output[output_count++] = e;
+            continue;
+        }
+
+        if (s_inside != e_inside) {
+            float t = 0.0f;
+            const float denom = ds - de;
+            if (fabsf(denom) > 0.00001f)
+                t = ds / denom;
+            if (t < 0.0f)
+                t = 0.0f;
+            if (t > 1.0f)
+                t = 1.0f;
+
+            FPOINT cross;
+            cross.x = s.x + ((e.x - s.x) * t);
+            cross.y = s.y + ((e.y - s.y) * t);
+            if (output_count < MAX_POLY_SIDES)
+                output[output_count++] = cross;
+        }
+
+        if (!s_inside && e_inside) {
+            if (output_count < MAX_POLY_SIDES)
+                output[output_count++] = e;
+        }
+    }
+
+    long sides = 0;
+    for (i = 0; i < output_count; ++i) {
+        const long px = static_cast<long>(output[i].x + (output[i].x >= 0.0f ? 0.5f : -0.5f));
+        const long py = static_cast<long>(output[i].y + (output[i].y >= 0.0f ? 0.5f : -0.5f));
+        if ((sides > 0) && (out_points[sides - 1].x == px) && (out_points[sides - 1].y == py))
+            continue;
+        out_points[sides].x = px;
+        out_points[sides].y = py;
+        ++sides;
+    }
+
+    if ((sides >= 2) && (out_points[0].x == out_points[sides - 1].x) && (out_points[0].y == out_points[sides - 1].y))
+        --sides;
+
+    return sides;
 }
 
 /*    ======================================================================================= */
