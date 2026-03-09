@@ -130,7 +130,12 @@ bool sound_init(void) {
     desired.freq = 44100;
     desired.format = AUDIO_F32SYS;
     desired.channels = 2;
+#if defined(__EMSCRIPTEN__)
+    /* Web: larger buffer so main-thread game logic doesn't cause underruns (256 ≈ 5.8 ms, 1024 ≈ 23 ms). */
+    desired.samples = 1024;
+#else
     desired.samples = 256;
+#endif
     desired.callback = audio_callback;
 
     g_audio_device = SDL_OpenAudioDevice(NULL, 0, &desired, &g_audio_spec, 0);

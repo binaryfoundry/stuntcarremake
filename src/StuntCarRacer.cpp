@@ -388,11 +388,14 @@ static void FreeData(void) {
 void GetScreenDimensions(long* screen_width, long* screen_height) {
 #ifdef USE_SDL2
     if (window) {
-        int w, h;
-        SDL_GetWindowSize(window, &w, &h);
-        *screen_width = w;
-        *screen_height = h;
-        return;
+        /* Return ortho/logical dimensions so backdrop and 3D projection use the same space as glOrtho(0, projWidth, 480, 0). */
+        GLint vp[4];
+        glGetIntegerv(GL_VIEWPORT, vp);
+        if (vp[2] > 0 && vp[3] > 0) {
+            *screen_width = (480L * (long)vp[2]) / (long)vp[3];
+            *screen_height = 480;
+            return;
+        }
     }
 #endif
 #ifdef linux
