@@ -565,8 +565,9 @@ void CreateBuffers(RenderDevice* pDevice) {
 /*    Description:    */
 /*    ======================================================================================= */
 
-static void CalcTrackMenuViewpoint(void) {
-    static long circle_y_angle = 0;
+/** angleIncrement: units per call (e.g. 128 per logic tick, or 128*stepSeconds/logicTickInterval per physics step). */
+static void CalcTrackMenuViewpoint(float angleIncrement) {
+    static double menu_circle_angle = 0.0;
 
     short sin, cos;
     long centre = (NUM_TRACK_CUBES * CUBE_SIZE) / 2;
@@ -578,9 +579,14 @@ static void CalcTrackMenuViewpoint(void) {
     target_z = (NUM_TRACK_CUBES * CUBE_SIZE) / 2;
 
     // camera moves in a circle around the track
-    if (!bPaused)
-        circle_y_angle += 128;
-    circle_y_angle &= (MAX_ANGLE - 1);
+    if (!bPaused) {
+        menu_circle_angle += (double)angleIncrement;
+        while (menu_circle_angle >= (double)MAX_ANGLE)
+            menu_circle_angle -= (double)MAX_ANGLE;
+        while (menu_circle_angle < 0.0)
+            menu_circle_angle += (double)MAX_ANGLE;
+    }
+    long circle_y_angle = (long)menu_circle_angle;
 
     GetSinCos(circle_y_angle, &sin, &cos);
 
@@ -816,6 +822,7 @@ static void UpdateInterpolatedCarTransforms(RenderDevice* pDevice, float alpha) 
     if (alpha > 1.0f)
         alpha = 1.0f;
 
+    // TRACK_MENU now updates viewpoint every physics step and captures prev, so we can interpolate.
     const float backdropY = LerpLong(prev_viewpoint1_y, viewpoint1_y, alpha);
     const float backdropXa = LerpWrappedAngleUnits(prev_viewpoint1_x_angle, viewpoint1_x_angle, alpha);
     const float backdropYa = LerpWrappedAngleUnits(prev_viewpoint1_y_angle, viewpoint1_y_angle, alpha);
@@ -879,13 +886,25 @@ static void UpdateInterpolatedCarTransforms(RenderDevice* pDevice, float alpha) 
         mat4Multiply(&matView, &matView, &matTrans);
 #endif
         pDevice->SetTransform(TS_VIEW, &matView);
-    } else if ((GameMode == TRACK_PREVIEW) || (GameMode == TRACK_MENU)) {
+    } else if (GameMode == TRACK_MENU) {
         const float viewX = LerpLong(prev_viewpoint1_x, viewpoint1_x, alpha);
         const float viewY = -LerpLong(prev_viewpoint1_y, viewpoint1_y, alpha) / static_cast<float>(1 << LOG_PRECISION);
         const float viewZ = LerpLong(prev_viewpoint1_z, viewpoint1_z, alpha);
         const float lookX = LerpLong(prev_target_x, target_x, alpha);
         const float lookY = LerpLong(prev_target_y, target_y, alpha);
         const float lookZ = LerpLong(prev_target_z, target_z, alpha);
+        glm::vec3 vEyePt(viewX, viewY, viewZ);
+        glm::vec3 vLookatPt(lookX, lookY, lookZ);
+        mat4LookAt(&matView, &vEyePt, &vLookatPt, &vUpVec);
+        pDevice->SetTransform(TS_VIEW, &matView);
+    } else if (GameMode == TRACK_PREVIEW) {
+        // Use current viewpoint/target only; lerping with prev (from menu or prior frame) caused spinning.
+        const float viewX = static_cast<float>(viewpoint1_x);
+        const float viewY = -static_cast<float>(viewpoint1_y) / static_cast<float>(1 << LOG_PRECISION);
+        const float viewZ = static_cast<float>(viewpoint1_z);
+        const float lookX = static_cast<float>(target_x);
+        const float lookY = static_cast<float>(target_y);
+        const float lookZ = static_cast<float>(target_z);
         glm::vec3 vEyePt(viewX, viewY, viewZ);
         glm::vec3 vLookatPt(lookX, lookY, lookZ);
         mat4LookAt(&matView, &vEyePt, &vLookatPt, &vUpVec);
@@ -970,24 +989,14 @@ void CALLBACK OnFrameMove(RenderDevice* pDevice, double fTime, float fElapsedTim
     }
 
     if ((GameMode == TRACK_MENU) || (GameMode == TRACK_PREVIEW)) {
-        if (GameMode == TRACK_MENU)
-            CalcTrackMenuViewpoint();
-        else {
-            CalcTrackPreviewViewpoint();
-
-            // Set the car's world transform matrix
+        if (GameMode == TRACK_MENU) {
+            // Viewpoint/target updated every physics step in RunFrame() for smooth interpolation.
+        } else {
+            // TRACK_PREVIEW: viewpoint/target updated per physics step in RunFrame(); only set opponent transform here.
             SetOpponentsCarWorldTransform();
         }
 
-        // Set Direct3D transforms, ready for OnFrameRender
-        viewpoint1_x >>= LOG_PRECISION;
-        // NOTE: viewpoint1_y must be preserved for use by DrawBackdrop
-        viewpoint1_z >>= LOG_PRECISION;
-
-        target_x >>= LOG_PRECISION;
-        target_y = -target_y;
-        target_y >>= LOG_PRECISION;
-        target_z >>= LOG_PRECISION;
+        // Set Direct3D transforms (TRACK_MENU and TRACK_PREVIEW viewpoint/target already scaled in RunFrame substep loop)
 
         // Set the track's world transform matrix
         mat4Identity(&matWorldTrack);
@@ -1940,29 +1949,48 @@ static bool RunFrame(double frameTime, bool allowQuit) {
         SampleControlsForLogicSubstep(lastInput);
 
         // --- Body-dynamics integrator (once per physics step, decoupled from game logic) ---
-        if ((GameMode == TRACK_PREVIEW) || (GameMode == GAME_IN_PROGRESS)) {
-            if (!bPaused) {
+        if ((GameMode == TRACK_MENU) || (GameMode == TRACK_PREVIEW) || (GameMode == GAME_IN_PROGRESS)) {
+            if (GameMode == TRACK_MENU) {
                 CapturePreviousCarState();
-                if ((GameMode == GAME_IN_PROGRESS) && (!bPlayerPaused))
-                    CarBehaviour(lastInput, &player1_x, &player1_y, &player1_z, &player1_x_angle,
-                                 &player1_y_angle, &player1_z_angle, (float)g_physicsStepSeconds);
-                OpponentBehaviour(&opponent_x, &opponent_y, &opponent_z, &opponent_x_angle,
-                                  &opponent_y_angle, &opponent_z_angle, bOpponentPaused,
-                                  (float)g_physicsStepSeconds);
-            }
-            if (GameMode == GAME_IN_PROGRESS) {
-                // Snap the car back above the road surface before computing the camera.
-                // This must happen here (post-integration, pre-viewpoint) so the corrected
-                // player1_y feeds into both CalcGameViewpoint and the next substep's prev state.
-                LimitViewpointY(&player1_y);
                 if (!bPaused) {
-                    // Recompute camera position from corrected car state and scale to
-                    // render coordinates so UpdateInterpolatedCarTransforms can
-                    // smoothly lerp the viewpoint at the full physics rate.
-                    CalcGameViewpoint();
+                    const float menuAnglePerStep =
+                        128.0f * static_cast<float>(g_physicsStepSeconds / g_logicTickInterval);
+                    CalcTrackMenuViewpoint(menuAnglePerStep);
                     viewpoint1_x >>= LOG_PRECISION;
-                    // NOTE: viewpoint1_y must be preserved (unshifted) for DrawBackdrop
                     viewpoint1_z >>= LOG_PRECISION;
+                    target_x >>= LOG_PRECISION;
+                    target_y = -target_y;
+                    target_y >>= LOG_PRECISION;
+                    target_z >>= LOG_PRECISION;
+                }
+            } else {
+                if (!bPaused) {
+                    CapturePreviousCarState();
+                    if ((GameMode == GAME_IN_PROGRESS) && (!bPlayerPaused))
+                        CarBehaviour(lastInput, &player1_x, &player1_y, &player1_z, &player1_x_angle,
+                                     &player1_y_angle, &player1_z_angle, (float)g_physicsStepSeconds);
+                    OpponentBehaviour(&opponent_x, &opponent_y, &opponent_z, &opponent_x_angle,
+                                      &opponent_y_angle, &opponent_z_angle, bOpponentPaused,
+                                      (float)g_physicsStepSeconds);
+                }
+                if (GameMode == GAME_IN_PROGRESS) {
+                    // Snap the car back above the road surface before computing the camera.
+                    LimitViewpointY(&player1_y);
+                    if (!bPaused) {
+                        CalcGameViewpoint();
+                        viewpoint1_x >>= LOG_PRECISION;
+                        viewpoint1_z >>= LOG_PRECISION;
+                    }
+                } else if (GameMode == TRACK_PREVIEW && !bPaused) {
+                    // Update preview camera every physics step so prev/current stay in sync;
+                    // otherwise we interpolate from TRACK_MENU (or stale) viewpoint and the camera goes crazy.
+                    CalcTrackPreviewViewpoint();
+                    viewpoint1_x >>= LOG_PRECISION;
+                    viewpoint1_z >>= LOG_PRECISION;
+                    target_x >>= LOG_PRECISION;
+                    target_y = -target_y;
+                    target_y >>= LOG_PRECISION;
+                    target_z >>= LOG_PRECISION;
                 }
             }
         }
@@ -1982,6 +2010,17 @@ static bool RunFrame(double frameTime, bool allowQuit) {
             anyLogicFrameMoved = true;
     }
     bFrameMoved = anyLogicFrameMoved;
+
+    // If no physics step ran this frame (e.g. first frame), set TRACK_MENU viewpoint once so it's valid.
+    if (GameMode == TRACK_MENU && stepsThisFrame == 0) {
+        CalcTrackMenuViewpoint(0.0f);
+        viewpoint1_x >>= LOG_PRECISION;
+        viewpoint1_z >>= LOG_PRECISION;
+        target_x >>= LOG_PRECISION;
+        target_y = -target_y;
+        target_y >>= LOG_PRECISION;
+        target_z >>= LOG_PRECISION;
+    }
 
     if ((GameMode == TRACK_MENU) || (GameMode == TRACK_PREVIEW) || (GameMode == GAME_IN_PROGRESS)) {
         // Alpha is the fractional time remaining in the current physics step.
