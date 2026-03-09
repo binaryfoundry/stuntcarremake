@@ -1896,24 +1896,25 @@ static void ApplyWindowLayout(int windowWidth, int windowHeight, bool logLayout)
 
     const float virtualWidth = wideScreen ? 800.0f : 640.0f;
     const float virtualHeight = 480.0f;
-    int viewportW = static_cast<int>(virtualWidth * screenScale);
-    int viewportH = static_cast<int>(virtualHeight * screenScale);
-    if (viewportW < 1)
-        viewportW = 1;
-    if (viewportH < 1)
-        viewportH = 1;
-    int viewportX = (windowWidth - viewportW) / 2;
-    int viewportY = (windowHeight - viewportH) / 2;
+    
+    /* Use the whole rendering area instead of letterboxing */
+    int viewportW = windowWidth;
+    int viewportH = windowHeight;
+    int viewportX = 0;
+    int viewportY = 0;
 
     glViewport(viewportX, viewportY, viewportW, viewportH);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0, virtualWidth, virtualHeight, 0, 0, FURTHEST_Z);
+    
+    /* Adjust orthographic projection to match the new aspect ratio */
+    float projWidth = virtualHeight * (static_cast<float>(windowWidth) / static_cast<float>(windowHeight));
+    glOrtho(0, projWidth, virtualHeight, 0, 0, FURTHEST_Z);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
     glm::mat4 matProj;
-    FLOAT fAspect = virtualWidth / virtualHeight;
+    FLOAT fAspect = projWidth / virtualHeight;
     mat4PerspectiveFov(&matProj, PI / 4, fAspect, 0.5f, FURTHEST_Z);
     pDevice.SetTransform(TS_PROJECTION, &matProj);
 

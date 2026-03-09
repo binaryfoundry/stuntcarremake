@@ -802,6 +802,12 @@ void DrawCockpit(RenderDevice* pDevice) {
     float scaleX = static_cast<float>(current_width) / base_width;
     float scaleY = static_cast<float>(current_height) / base_height;
 
+    /* Center cockpit in the full viewport (projection width may exceed base_width when not letterboxed) */
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    float projWidth = (vp[3] > 0) ? (480.0f * static_cast<float>(vp[2]) / static_cast<float>(vp[3])) : base_width;
+    float offsetX = (projWidth - base_width) * 0.5f;
+
     // Prepare Cockpit drawing
     TRANSFORMEDTEXVERTEX* pVertices;
     cockpit_vtx = 0;
@@ -811,16 +817,16 @@ void DrawCockpit(RenderDevice* pDevice) {
     }
     old_leftwheel = (front_left_amount_below_road >> 6);
     float Wide = wideScreen ? COCKPIT_WIDESCREEN_OFFSET : 0.0f;
-    float X1 = (Wide + COCKPIT_WHEEL_LEFT_OFFSET) * 2 * scaleX,
-          X2 = ((Wide + COCKPIT_WHEEL_LEFT_OFFSET) * 2 + 2 * COCKPIT_WHEEL_WIDTH) * scaleX;
+    float X1 = (Wide + COCKPIT_WHEEL_LEFT_OFFSET) * 2 * scaleX + offsetX,
+          X2 = ((Wide + COCKPIT_WHEEL_LEFT_OFFSET) * 2 + 2 * COCKPIT_WHEEL_WIDTH) * scaleX + offsetX;
     float Y1 = (480.0f - COCKPIT_WHEEL_HEIGHT * 2.4f - COCKPIT_WHEEL_BOTTOM_GAP * 2.4f) * scaleY,
           Y2 = (480.0f - COCKPIT_WHEEL_BOTTOM_GAP * 2.4f) * scaleY;
     Y1 -= old_leftwheel * scaleY;
     Y2 -= old_leftwheel * scaleY;
     AddQuad(pVertices, X1, Y1, X2, Y2, 0.8f, eWheel0 + (leftwheel_angle >> 16) % 6, 0, 1);
     old_rightwheel = (front_right_amount_below_road >> 6);
-    X1 = (Wide * 2.f + 640.f - COCKPIT_WHEEL_LEFT_OFFSET * 2.f - COCKPIT_WHEEL_WIDTH * 2) * scaleX,
-    X2 = (Wide * 2.f + 640.f - COCKPIT_WHEEL_LEFT_OFFSET * 2.f) * scaleX;
+    X1 = (Wide * 2.f + 640.f - COCKPIT_WHEEL_LEFT_OFFSET * 2.f - COCKPIT_WHEEL_WIDTH * 2) * scaleX + offsetX,
+    X2 = (Wide * 2.f + 640.f - COCKPIT_WHEEL_LEFT_OFFSET * 2.f) * scaleX + offsetX;
     Y1 = (480.0f - COCKPIT_WHEEL_HEIGHT * 2.4f - COCKPIT_WHEEL_BOTTOM_GAP * 2.4f) * scaleY,
     Y2 = (480.0f - COCKPIT_WHEEL_BOTTOM_GAP * 2.4f) * scaleY;
     Y1 -= old_rightwheel * scaleY;
@@ -835,36 +841,36 @@ void DrawCockpit(RenderDevice* pDevice) {
         engineFrame = eEngineFlames0 + engineframes[frame >> 1];
     }
     if (wideScreen) {
-        AddQuad(pVertices, 0.0f, COCKPIT_WLEFT_Y_OFFSET * 2.4f * scaleY, COCKPIT_WLEFT_X_OFFSET * 2.f * scaleX,
+        AddQuad(pVertices, 0.0f + offsetX, COCKPIT_WLEFT_Y_OFFSET * 2.4f * scaleY, COCKPIT_WLEFT_X_OFFSET * 2.f * scaleX + offsetX,
                 480.0f * scaleY, 0.9f, (bSuperLeague) ? eCockpitWL2 : eCockpitWL, 0, 1);
-        AddQuad(pVertices, (800.f - COCKPIT_WRIGHT_X_OFFSET) * scaleX, COCKPIT_WRIGHT_Y_OFFSET * 2.4f * scaleY,
-                800.f * scaleX, 480.0f * scaleY, 0.9f, (bSuperLeague) ? eCockpitWR2 : eCockpitWR, 0, 1);
+        AddQuad(pVertices, (800.f - COCKPIT_WRIGHT_X_OFFSET) * scaleX + offsetX, COCKPIT_WRIGHT_Y_OFFSET * 2.4f * scaleY,
+                800.f * scaleX + offsetX, 480.0f * scaleY, 0.9f, (bSuperLeague) ? eCockpitWR2 : eCockpitWR, 0, 1);
     }
-    AddQuad(pVertices, (Wide + COCKPIT_ENGINE_X_OFFSET) * 2.0f * scaleX, COCKPIT_ENGINE_Y_OFFSET * 2.4f * scaleY,
-            (Wide + COCKPIT_ENGINE_X_OFFSET + COCKPIT_ENGINE_WIDTH) * 2.0f * scaleX,
+    AddQuad(pVertices, (Wide + COCKPIT_ENGINE_X_OFFSET) * 2.0f * scaleX + offsetX, COCKPIT_ENGINE_Y_OFFSET * 2.4f * scaleY,
+            (Wide + COCKPIT_ENGINE_X_OFFSET + COCKPIT_ENGINE_WIDTH) * 2.0f * scaleX + offsetX,
             (COCKPIT_ENGINE_Y_OFFSET + COCKPIT_ENGINE_HEIGHT) * 2.4f * scaleY, 0.89f, engineFrame, 0, 1);
-    AddQuad(pVertices, (Wide + COCKPIT_TOP_X_OFFSET) * 2.f * scaleX, 0.0f,
-            (Wide + COCKPIT_TOP_X_OFFSET + COCKPIT_TOP_WIDTH) * 2.f * scaleX, COCKPIT_TOP_HEIGHT * 2.4f * scaleY, 0.9f,
+    AddQuad(pVertices, (Wide + COCKPIT_TOP_X_OFFSET) * 2.f * scaleX + offsetX, 0.0f,
+            (Wide + COCKPIT_TOP_X_OFFSET + COCKPIT_TOP_WIDTH) * 2.f * scaleX + offsetX, COCKPIT_TOP_HEIGHT * 2.4f * scaleY, 0.9f,
             (bSuperLeague) ? eCockpitTop2 : eCockpitTop, 0, 1);
-    AddQuad(pVertices, Wide * 2.f * scaleX + 0.0f, 0.0f, (Wide + COCKPIT_TOP_X_OFFSET) * 2.f * scaleX,
+    AddQuad(pVertices, Wide * 2.f * scaleX + 0.0f + offsetX, 0.0f, (Wide + COCKPIT_TOP_X_OFFSET) * 2.f * scaleX + offsetX,
             COCKPIT_SIDE_HEIGHT * 2.4f * scaleY, 0.9f, (bSuperLeague) ? eCockpitLeft2 : eCockpitLeft, 0, 1);
-    AddQuad(pVertices, (Wide + COCKPIT_RIGHT_X_OFFSET) * 2.f * scaleX, 0.0f, (640.0f + Wide * 2.f) * scaleX,
+    AddQuad(pVertices, (Wide + COCKPIT_RIGHT_X_OFFSET) * 2.f * scaleX + offsetX, 0.0f, (640.0f + Wide * 2.f) * scaleX + offsetX,
             COCKPIT_SIDE_HEIGHT * 2.4f * scaleY, 0.9f, (bSuperLeague) ? eCockpitRight2 : eCockpitRight, 0, 1);
-    AddQuad(pVertices, Wide * 2 * scaleX + 0.0f, COCKPIT_SIDE_HEIGHT * 2.4f * scaleY, (640.0f + Wide * 2.f) * scaleX,
+    AddQuad(pVertices, Wide * 2 * scaleX + 0.0f + offsetX, COCKPIT_SIDE_HEIGHT * 2.4f * scaleY, (640.0f + Wide * 2.f) * scaleX + offsetX,
             480.0f * scaleY, 0.9f, (bSuperLeague) ? eCockpitBottom2 : eCockpitBottom, 0, 1);
     if (new_damage) {
         // cracking... width is 238, offset is 41 (in 320x200 screen space)
         float dam = static_cast<float>(new_damage);
         if (dam > COCKPIT_TOP_WIDTH)
             dam = COCKPIT_TOP_WIDTH;
-        float damX1 = (Wide + COCKPIT_TOP_X_OFFSET) * 2.0f * scaleX,
-              damX2 = (Wide + COCKPIT_TOP_X_OFFSET + dam) * 2.0f * scaleX;
+        float damX1 = (Wide + COCKPIT_TOP_X_OFFSET) * 2.0f * scaleX + offsetX,
+              damX2 = (Wide + COCKPIT_TOP_X_OFFSET + dam) * 2.0f * scaleX + offsetX;
         float damY1 = 0.0f, damY2 = 0.0f + COCKPIT_DAMAGE_HEIGHT * 2.4f * scaleY;
         AddQuad(pVertices, damX1, damY1, damX2, damY2, 0.91f, (bSuperLeague) ? eCracking2 : eCracking, 0,
                 dam / COCKPIT_TOP_WIDTH);
     }
     for (int i = 0; i < nholes; i++) {
-        float holeX1 = (Wide + COCKPIT_HOLE_X_OFFSET + COCKPIT_HOLE_SPACING * i) * 2 * scaleX,
+        float holeX1 = (Wide + COCKPIT_HOLE_X_OFFSET + COCKPIT_HOLE_SPACING * i) * 2 * scaleX + offsetX,
               holeX2 = holeX1 + COCKPIT_HOLE_WIDTH * 2.0f * scaleX;
         float holeY1 = 0.0f, holeY2 = 0.0f + COCKPIT_DAMAGE_HEIGHT * 2.4f * scaleY;
         AddQuad(pVertices, holeX1, holeY1, holeX2, holeY2, 0.95f, (bSuperLeague) ? eHole2 : eHole, 0, 1);
@@ -880,12 +886,12 @@ void DrawCockpit(RenderDevice* pDevice) {
             OutputDebugStringW(L"ERROR: Failed to lock speed bar vertex buffer\n");
             return;
         }
-        float speedX1 = (Wide * 2.f + COCKPIT_SPEEDBAR_X_OFFSET) * scaleX,
+        float speedX1 = (Wide * 2.f + COCKPIT_SPEEDBAR_X_OFFSET) * scaleX + offsetX,
               speedX2 =
                   (Wide * 2.f + COCKPIT_SPEEDBAR_X_OFFSET +
                    ((old_speedbar > COCKPIT_SPEEDBAR_MAX) ? (old_speedbar - COCKPIT_SPEEDBAR_MAX) : old_speedbar) /
                        static_cast<float>(COCKPIT_SPEEDBAR_MAX) * COCKPIT_SPEEDBAR_WIDTH) *
-                  scaleX;
+                  scaleX + offsetX;
         float speedY1 = (480.0f - COCKPIT_SPEEDBAR_Y_OFFSET) * scaleY,
               speedY2 = (480.0f - COCKPIT_SPEEDBAR_Y_OFFSET + COCKPIT_SPEEDBAR_HEIGHT) * scaleY;
 #ifdef linux
