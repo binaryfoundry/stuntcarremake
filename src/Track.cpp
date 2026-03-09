@@ -1102,7 +1102,7 @@ static void ConvertAmigaPieceY(AMIGA_PIECE_Y* amiga, COORD_Y* dest) {
 
 typedef enum { LEFT_SIDE = 0, RIGHT_SIDE, ROAD, NUM_TRACK_FACES } TrackFaceType;
 
-static IDirect3DVertexBuffer9 *pTrackVB = NULL, *pShadowVB = NULL;
+static IDirect3DVertexBuffer9 *pTrackVB = NULL, *pShadowVB = NULL, *pGroundPlaneVB = NULL;
 static long trackVertices, trackSegments;
 static long numShadowVertices;
 static long PieceFirstVertex[NUM_TRACK_FACES][MAX_PIECES_PER_TRACK];
@@ -1749,6 +1749,100 @@ void DrawTrack(IDirect3DDevice9* pd3dDevice) {
         pd3dDevice->SetFVF(D3DFVF_UTVERTEX);
         pd3dDevice->DrawPrimitive(D3DPT_TRIANGLELIST, 0, numShadowVertices / 3);
     }
+}
+
+/*    ======================================================================================= */
+/*    Function:        CreateGroundPlaneVertexBuffer                                         */
+/*                                                                                            */
+/*    Description:    Create a 3D ground plane mesh in world space                           */
+/*    ======================================================================================= */
+
+HRESULT CreateGroundPlaneVertexBuffer(IDirect3DDevice9* pd3dDevice) {
+    if (pGroundPlaneVB == NULL) {
+        long vertices = 6;
+        if (FAILED(pd3dDevice->CreateVertexBuffer(vertices * sizeof(UTVERTEX), D3DUSAGE_WRITEONLY,
+                                                  D3DFVF_UTVERTEX, D3DPOOL_DEFAULT, &pGroundPlaneVB, NULL))) {
+            OutputDebugStringW(L"ERROR: Failed to create ground plane vertex buffer\n");
+            return E_FAIL;
+        }
+    }
+
+    UTVERTEX* pVertices;
+    if (FAILED(pGroundPlaneVB->Lock(0, 0, (void**)&pVertices, 0))) {
+        OutputDebugStringW(L"ERROR: Failed to lock ground plane vertex buffer\n");
+        return E_FAIL;
+    }
+
+    // Use same scale as track vertices: piece_x = cube_index << (LOG_CUBE_SIZE - LOG_PRECISION)
+    const long scale = (1L << (LOG_CUBE_SIZE - LOG_PRECISION));
+    const long track_extent = NUM_TRACK_CUBES * scale;
+    const float half_track = static_cast<float>(track_extent) * 0.5f;
+    // Extend ground well beyond the track in all directions so it reaches the horizon
+    const long horizon_mult = 8L;
+    const float half = static_cast<float>(track_extent * horizon_mult) * 0.5f;
+    const float min_xz = half_track - half;
+    const float max_xz = half_track + half;
+    // Slightly below track bottom to avoid z-fighting with track underside
+    const float ground_y = static_cast<float>(TRACK_BOTTOM_Y) - 2.0f;
+    const DWORD ground_color = SCRGB(SCR_BASE_COLOUR + 13);    // match Backdrop GROUND_COLOUR
+
+    // Winding: CW when viewed from above so D3DCULL_CCW does not discard the faces.
+    // Triangle 1
+    pVertices[0].pos = D3DXVECTOR3(min_xz, ground_y, min_xz);
+    pVertices[0].color = ground_color;
+    pVertices[0].tu = 0.0f;
+    pVertices[0].tv = 0.0f;
+
+    pVertices[1].pos = D3DXVECTOR3(min_xz, ground_y, max_xz);
+    pVertices[1].color = ground_color;
+    pVertices[1].tu = 0.0f;
+    pVertices[1].tv = 1.0f;
+
+    pVertices[2].pos = D3DXVECTOR3(max_xz, ground_y, min_xz);
+    pVertices[2].color = ground_color;
+    pVertices[2].tu = 1.0f;
+    pVertices[2].tv = 0.0f;
+
+    // Triangle 2
+    pVertices[3].pos = D3DXVECTOR3(max_xz, ground_y, min_xz);
+    pVertices[3].color = ground_color;
+    pVertices[3].tu = 1.0f;
+    pVertices[3].tv = 0.0f;
+
+    pVertices[4].pos = D3DXVECTOR3(min_xz, ground_y, max_xz);
+    pVertices[4].color = ground_color;
+    pVertices[4].tu = 0.0f;
+    pVertices[4].tv = 1.0f;
+
+    pVertices[5].pos = D3DXVECTOR3(max_xz, ground_y, max_xz);
+    pVertices[5].color = ground_color;
+    pVertices[5].tu = 1.0f;
+    pVertices[5].tv = 1.0f;
+
+    pGroundPlaneVB->Unlock();
+    return S_OK;
+}
+
+void FreeGroundPlaneVertexBuffer(void) {
+    if (pGroundPlaneVB)
+        pGroundPlaneVB->Release(), pGroundPlaneVB = NULL;
+}
+
+void DrawGroundPlane(IDirect3DDevice9* pd3dDevice) {
+    if (pGroundPlaneVB == NULL)
+        return;
+
+    if (TrackID == NO_TRACK)
+        return;
+
+    pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);
+    pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
+
+    pd3dDevice->SetStreamSource(0, pGroundPlaneVB, 0, sizeof(UTVERTEX));
+    pd3dDevice->SetFVF(D3DFVF_UTVERTEX);
+
+    pd3dDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_DISABLE);
+    pd3dDevice->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 2);
 }
 
 /*    ======================================================================================= */

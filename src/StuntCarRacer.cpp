@@ -575,6 +575,8 @@ void CreateBuffers(IDirect3DDevice9* pd3dDevice) {
         printf("Error creating PolygonVertexBuffer\n");
     if (CreateTrackVertexBuffer(pd3dDevice) != S_OK)
         printf("Error creating TrackVertexBuffer\n");
+    if (CreateGroundPlaneVertexBuffer(pd3dDevice) != S_OK)
+        printf("Error creating GroundPlaneVertexBuffer\n");
     if (CreateShadowVertexBuffer(pd3dDevice) != S_OK)
         printf("Error creating ShadowVertexBuffer\n");
     if (CreateCarVertexBuffer(pd3dDevice) != S_OK)
@@ -1168,6 +1170,14 @@ static void HandleTrackMenu(TextHelper& txtHelper) {
             return;
         }
 
+        if (CreateGroundPlaneVertexBuffer(GetRenderDevice()) != S_OK) {
+#if defined(DEBUG) || defined(_DEBUG)
+            fprintf(out, "Failed to create ground plane vertex buffer %d\n", track_number);
+#endif
+            MessageBox(NULL, L"Failed to create ground plane vertex buffer", L"Error", MB_OK);
+            return;
+        }
+
         keyPress = '\0';
     }
 
@@ -1503,6 +1513,7 @@ void CALLBACK OnFrameRender(IDirect3DDevice9* pd3dDevice, double fTime, float fE
 
         // Draw Track
         pd3dDevice->SetTransform(D3DTS_WORLD, &matWorldTrack);
+        DrawGroundPlane(pd3dDevice);
         DrawTrack(pd3dDevice);
 
         switch (GameMode) {

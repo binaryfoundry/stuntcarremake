@@ -26,6 +26,9 @@
 
 #define TRACK_BOTTOM_Y 0 // used to be 512
 
+#define GROUND_PLANE_WIDTH (NUM_TRACK_CUBES * CUBE_SIZE)
+#define GROUND_PLANE_DEPTH (NUM_TRACK_CUBES * CUBE_SIZE)
+
 // note that track numbers do not correspond to track league positions
 #define NO_TRACK -1
 #define LITTLE_RAMP 0
@@ -104,5 +107,11 @@ extern void FreeShadowVertexBuffer(void);
 extern void MoveDrawBridge(void);
 
 extern void ResetDrawBridge(void);
+
+extern HRESULT CreateGroundPlaneVertexBuffer(IDirect3DDevice9* pd3dDevice);
+
+extern void FreeGroundPlaneVertexBuffer(void);
+
+extern void DrawGroundPlane(IDirect3DDevice9* pd3dDevice);
 
 #endif /* _TRACK */

@@ -198,13 +198,7 @@ static void DrawHorizon(long viewpoint_y, long viewpoint_x_angle, long viewpoint
         POINT points[MAX_POLY_SIDES];
         long sides;
 
-        // Sky fills the screen, then a clipped ground half-plane is overlaid.
         DrawFilledRectangle(min_x, min_y, max_x, max_y, SCRGB(SKY_COLOUR));
-
-        sides = BuildGroundPlanePolygon(x1, y1, x2, y2, screen_width, screen_height, upside_down, points);
-        SetTextureColour(GROUND_COLOUR);
-        if (sides >= 3)
-            DrawPolygon(points, sides);
     } else // horizon line is off screen
     {
         long off_top = FALSE, off_bottom = FALSE;
