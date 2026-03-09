@@ -42,10 +42,9 @@
 #define HEIGHT_ABOVE_ROAD (100)
 
 #define FURTHEST_Z (131072.0f)
-/* Physics at 60 Hz; logic tick every 8 substeps (~7.5 Hz, step ~0.133s). */
-static const double PHYSICS_STEP_SECONDS = 1.0 / 60.0;
-static const int PHYSICS_SUBSTEPS_PER_BASE_LOGIC = 8;
-static const double BASE_LOGIC_STEP_SECONDS = PHYSICS_SUBSTEPS_PER_BASE_LOGIC * PHYSICS_STEP_SECONDS;
+static const double BASE_LOGIC_STEP_SECONDS = 0.14; // original coarse game step (~1/7.14s)
+static const int PHYSICS_SUBSTEPS_PER_BASE_LOGIC = 7;
+static const double PHYSICS_STEP_SECONDS = BASE_LOGIC_STEP_SECONDS / PHYSICS_SUBSTEPS_PER_BASE_LOGIC;
 /* Cap physics steps per frame to avoid catch-up stutter and spiral of death when the game can't keep up. */
 static const int MAX_PHYSICS_STEPS_PER_FRAME = 10;
 
