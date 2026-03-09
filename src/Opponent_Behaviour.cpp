@@ -1090,10 +1090,21 @@ static void UpdateOpponentsActualWheelHeights(void) {
         (total_diff + opp_new_rear_right_difference + (opp_new_rear_right_difference << 2)) >> 3;
     opp_y_acceleration[FRONT] = (total_diff + opp_new_front_difference + (opp_new_front_difference << 2)) >> 3;
 
-    // Randomly make opponent do a wheelie (if they have that attribute)
-    if (opponent_attributes[opponentsID] & WHEELIE) {
-        i = opp_y_speed[FRONT] | opp_y_acceleration[FRONT];
-        if ((i & 0xfffc) == 0) // If front of car isn't moving much vertically
+    // Randomly make opponent do a wheelie (if they have that attribute).
+    // Check once per reference period so rate is ~7 Hz regardless of physics Hz.
+    static int s_wheelie_step_count = 0;
+    int wheelie_period = (g_physicsStepScale > 0.0f && g_physicsStepScale < 1.0f)
+        ? (int)(1.0f / g_physicsStepScale + 0.5f) : 1;
+    if (wheelie_period < 1)
+        wheelie_period = 1;
+    s_wheelie_step_count++;
+    if (s_wheelie_step_count >= wheelie_period)
+        s_wheelie_step_count = 0;
+    if ((opponent_attributes[opponentsID] & WHEELIE) && (s_wheelie_step_count == 0)) {
+        // Original condition: (speed | accel) & 0xfffc == 0 (both in [0..3]).
+        // At high Hz, raw opp_y_acceleration is ~1/g_physicsStepScale times larger even at rest
+        // (because increase_effective is scaled up), so only check speed here.
+        if ((opp_y_speed[FRONT] & 0xfffc) == 0) // If front of car isn't moving much vertically
         {
             i = rand() & 0xf;
             if (i == 0)
@@ -1163,7 +1174,11 @@ static void CalculateWheelDifference(long road_height, long actual_height, long 
     }
 
     amount_below_road = new_difference - *old_difference_in_out;
-    amount_below_road = ((amount_below_road * INCREASE) >> 8) + new_difference;
+    // INCREASE multiplies velocity term; scale like player spring: effective = ref * (dt_ref/dt)
+    const long increase_effective = (g_physicsStepScale > 0.0f)
+        ? (long)((float)INCREASE / g_physicsStepScale)
+        : (long)INCREASE;
+    amount_below_road = ((amount_below_road * increase_effective) >> 8) + new_difference;
 
     if (amount_below_road < 0)
         amount_below_road = 0;
@@ -1337,6 +1352,16 @@ static void RandomizeOpponentsSteering(void) {
     if (!opp_touching_road)
         return;
 
+    // Only roll for "start new steering?" once per reference period (same idea as wheelie).
+    static int s_steering_roll_step_count = 0;
+    int steering_roll_period = (g_physicsStepScale > 0.0f && g_physicsStepScale < 1.0f)
+        ? (int)(1.0f / g_physicsStepScale + 0.5f) : 1;
+    if (steering_roll_period < 1)
+        steering_roll_period = 1;
+    s_steering_roll_step_count++;
+    if (s_steering_roll_step_count >= steering_roll_period)
+        s_steering_roll_step_count = 0;
+
     d1 = 0;
     B1bbbe[0] = B1bbbe[1] = 0;
     B1bbbd = 0;
@@ -1382,6 +1407,9 @@ ros1:
         d2 = 16;
 
     B1bbc2 = d2;
+
+    if (s_steering_roll_step_count != 0)
+        goto ros2; // only roll once per reference period
 
     value = rand() & 0x1f;
 #ifdef TEST_AMIGA_ROS
@@ -1738,7 +1766,8 @@ ctccd1:
     d0 = abs(d0);
 
     if (d0 >= 192) {
-        B1bbc3 = 3;
+        // Y-separation too large; delay Y collision.  Scale to reference-tick count.
+        B1bbc3 = (g_physicsStepScale > 0.0f) ? (long)(3.0f / g_physicsStepScale + 0.5f) : 3;
         return;
     }
 
@@ -1866,7 +1895,8 @@ void CarToCarCollision(void) {
         HitCarSoundBuffer->Play(NULL, NULL, NULL); // not looping
     }
 
-    cars_collided_delay = 5;
+    // Scale cooldown to reference-tick duration so sound doesn't spam at high Hz.
+    cars_collided_delay = (g_physicsStepScale > 0.0f) ? (long)(5.0f / g_physicsStepScale + 0.5f) : 5;
     return;
 }
 
@@ -1885,6 +1915,11 @@ static void OpponentPlayerInteraction(void) {
     // TO DO: Tidy up, rename variables, remove gotos
     long d0, d1, d2;
     long count, piece;
+    // Per-step lateral slew limit; scale so real-time steering rate is constant across Hz.
+    const long lateral_step = (g_physicsStepScale > 0.0f)
+        ? (long)(9.0f * g_physicsStepScale + 0.5f)
+        : 9L;
+    const long lateral_step_clamped = (lateral_step < 1) ? 1 : lateral_step;
 
     //VALUE2 = players_road_x_position;
     //VALUE3 = rear_wheel_surface_x_position;
@@ -2072,14 +2107,14 @@ opi10:
     if (d0 >= -16)
         goto opi13;
 
-    d0 = -9;
+    d0 = -lateral_step_clamped;
     goto opi12;
 
 opi11:
     if (d0 < 16)
         goto opi13;
 
-    d0 = 9;
+    d0 = lateral_step_clamped;
 
 opi12:
     d0 += opponents_road_x_position & 0xff;
