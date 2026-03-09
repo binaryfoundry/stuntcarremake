@@ -1340,11 +1340,17 @@ void RenderText(double fTime) {
         txtHelper.SetForegroundColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 
         // Position text using base 800x480 coordinates, then scale
+        float base_width = wideScreen ? static_cast<float>(BASE_WIDTH_WIDESCREEN) : static_cast<float>(BASE_WIDTH_STANDARD);
         float base_height = static_cast<float>(BASE_HEIGHT);
         float scaleY = static_cast<float>(pd3dsdBackBuffer->Height) / base_height;
+        // Match cockpit centering: ortho X is 0..projWidth, cockpit content is base_width wide and centered
+        GLint vp[4];
+        glGetIntegerv(GL_VIEWPORT, vp);
+        float projWidth = (vp[3] > 0) ? (480.0f * static_cast<float>(vp[2]) / static_cast<float>(vp[3])) : base_width;
+        float cockpitOffsetX = (projWidth - base_width) * 0.5f;
 
         // Boost text - positioned in top dashboard box
-        txtHelper.SetInsertionPos(static_cast<int>((88 + (wideScreen ? 80 : 0)) * textScale),
+        txtHelper.SetInsertionPos(static_cast<int>((88 + (wideScreen ? 80 : 0)) * textScale + cockpitOffsetX),
                                   static_cast<int>((BASE_HEIGHT - 48.0f) * scaleY));
         {
             std::wstringstream ss;
@@ -1352,7 +1358,7 @@ void RenderText(double fTime) {
             txtHelper.DrawFormattedTextLine(ss.str());
         }
         // Distance text - positioned in bottom dashboard box
-        txtHelper.SetInsertionPos(static_cast<int>((84 + (wideScreen ? 80 : 0)) * textScale),
+        txtHelper.SetInsertionPos(static_cast<int>((84 + (wideScreen ? 80 : 0)) * textScale + cockpitOffsetX),
                                   static_cast<int>((BASE_HEIGHT - 25.0f) * scaleY));
         {
             std::wstringstream ss;
