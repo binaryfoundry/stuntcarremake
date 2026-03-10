@@ -1,8 +1,8 @@
-# stuntcarremake
+# Stunt Car HD
 
 This is a port of *Stunt Car Racer Remake* with reworked physics for uncapped frame rate.
 
-Play: https://binaryfoundry.github.io/stuntcarremake/
+Play: https://binaryfoundry.github.io/stuntcarhd/
 
 ## Current Project Layout
 
