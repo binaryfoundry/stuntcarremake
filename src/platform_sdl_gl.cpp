@@ -334,69 +334,424 @@ glm::mat4* mat4PerspectiveFov(glm::mat4* pOut, float fovy, float Aspect, float z
     return pOut;
 }
 
-void RenderDevice::ActivateWorldMatrix() {
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-#ifdef USEGLM
-    glLoadMatrixf(glm::value_ptr(mInv * mProj * mView * mWorld));
+namespace {
+constexpr GLuint ATTRIB_POSITION = 0;
+constexpr GLuint ATTRIB_COLOR = 1;
+constexpr GLuint ATTRIB_TEXCOORD = 2;
+constexpr float SCREEN_VIRTUAL_HEIGHT = 480.0f;
+constexpr float SCREEN_NEAR_Z = -1.0f;
+constexpr float SCREEN_FAR_Z = 1.0f;
+
+#if !defined(HAVE_GLES) && !defined(__EMSCRIPTEN__)
+struct GLFunctions {
+    PFNGLACTIVETEXTUREPROC ActiveTexture;
+    PFNGLATTACHSHADERPROC AttachShader;
+    PFNGLBINDATTRIBLOCATIONPROC BindAttribLocation;
+    PFNGLBINDBUFFERPROC BindBuffer;
+    PFNGLBUFFERDATAPROC BufferData;
+    PFNGLCOMPILESHADERPROC CompileShader;
+    PFNGLCREATEPROGRAMPROC CreateProgram;
+    PFNGLCREATESHADERPROC CreateShader;
+    PFNGLDELETEBUFFERSPROC DeleteBuffers;
+    PFNGLDELETEPROGRAMPROC DeleteProgram;
+    PFNGLDELETESHADERPROC DeleteShader;
+    PFNGLDISABLEVERTEXATTRIBARRAYPROC DisableVertexAttribArray;
+    PFNGLENABLEVERTEXATTRIBARRAYPROC EnableVertexAttribArray;
+    PFNGLGENBUFFERSPROC GenBuffers;
+    PFNGLGETPROGRAMINFOLOGPROC GetProgramInfoLog;
+    PFNGLGETPROGRAMIVPROC GetProgramiv;
+    PFNGLGETSHADERINFOLOGPROC GetShaderInfoLog;
+    PFNGLGETSHADERIVPROC GetShaderiv;
+    PFNGLGETUNIFORMLOCATIONPROC GetUniformLocation;
+    PFNGLLINKPROGRAMPROC LinkProgram;
+    PFNGLSHADERSOURCEPROC ShaderSource;
+    PFNGLUNIFORM1IPROC Uniform1i;
+    PFNGLUNIFORMMATRIX4FVPROC UniformMatrix4fv;
+    PFNGLUSEPROGRAMPROC UseProgram;
+    PFNGLVERTEXATTRIB2FPROC VertexAttrib2f;
+    PFNGLVERTEXATTRIB4FPROC VertexAttrib4f;
+    PFNGLVERTEXATTRIBPOINTERPROC VertexAttribPointer;
+};
+
+static GLFunctions gGl = {};
+static bool gGlLoaded = false;
+
+template <typename T> bool LoadGLProc(T* out, const char* name) {
+    *out = reinterpret_cast<T>(SDL_GL_GetProcAddress(name));
+    if (!(*out)) {
+        printf("Missing OpenGL symbol: %s\n", name);
+        return false;
+    }
+    return true;
+}
+
+static bool EnsureGLFunctions() {
+    if (gGlLoaded)
+        return true;
+    bool ok = true;
+    ok &= LoadGLProc(&gGl.ActiveTexture, "glActiveTexture");
+    ok &= LoadGLProc(&gGl.AttachShader, "glAttachShader");
+    ok &= LoadGLProc(&gGl.BindAttribLocation, "glBindAttribLocation");
+    ok &= LoadGLProc(&gGl.BindBuffer, "glBindBuffer");
+    ok &= LoadGLProc(&gGl.BufferData, "glBufferData");
+    ok &= LoadGLProc(&gGl.CompileShader, "glCompileShader");
+    ok &= LoadGLProc(&gGl.CreateProgram, "glCreateProgram");
+    ok &= LoadGLProc(&gGl.CreateShader, "glCreateShader");
+    ok &= LoadGLProc(&gGl.DeleteBuffers, "glDeleteBuffers");
+    ok &= LoadGLProc(&gGl.DeleteProgram, "glDeleteProgram");
+    ok &= LoadGLProc(&gGl.DeleteShader, "glDeleteShader");
+    ok &= LoadGLProc(&gGl.DisableVertexAttribArray, "glDisableVertexAttribArray");
+    ok &= LoadGLProc(&gGl.EnableVertexAttribArray, "glEnableVertexAttribArray");
+    ok &= LoadGLProc(&gGl.GenBuffers, "glGenBuffers");
+    ok &= LoadGLProc(&gGl.GetProgramInfoLog, "glGetProgramInfoLog");
+    ok &= LoadGLProc(&gGl.GetProgramiv, "glGetProgramiv");
+    ok &= LoadGLProc(&gGl.GetShaderInfoLog, "glGetShaderInfoLog");
+    ok &= LoadGLProc(&gGl.GetShaderiv, "glGetShaderiv");
+    ok &= LoadGLProc(&gGl.GetUniformLocation, "glGetUniformLocation");
+    ok &= LoadGLProc(&gGl.LinkProgram, "glLinkProgram");
+    ok &= LoadGLProc(&gGl.ShaderSource, "glShaderSource");
+    ok &= LoadGLProc(&gGl.Uniform1i, "glUniform1i");
+    ok &= LoadGLProc(&gGl.UniformMatrix4fv, "glUniformMatrix4fv");
+    ok &= LoadGLProc(&gGl.UseProgram, "glUseProgram");
+    ok &= LoadGLProc(&gGl.VertexAttrib2f, "glVertexAttrib2f");
+    ok &= LoadGLProc(&gGl.VertexAttrib4f, "glVertexAttrib4f");
+    ok &= LoadGLProc(&gGl.VertexAttribPointer, "glVertexAttribPointer");
+    gGlLoaded = ok;
+    return ok;
+}
+
+#define STGL(name) gGl.name
 #else
-    float m[16];
-    matrix_mul(mProj.m, mView.m, m);
-    matrix_mul(m, mWorld.m, m);
-    glLoadMatrixf(m);
+static bool EnsureGLFunctions() { return true; }
+#define STGL(name) gl##name
 #endif
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadIdentity();
+
+static void SetClearDepthValue(float depthValue) {
+#if defined(HAVE_GLES) || defined(__EMSCRIPTEN__)
+    glClearDepthf(depthValue);
+#else
+    glClearDepth(depthValue);
+#endif
 }
-void RenderDevice::DeactivateWorldMatrix() {
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
-    glPopMatrix();
+
+static GLenum MapBlendMode(int mode) {
+    switch (mode) {
+    case BLEND_ZERO:
+        return GL_ZERO;
+    case BLEND_ONE:
+        return GL_ONE;
+    case BLEND_SRCCOLOR:
+        return GL_SRC_COLOR;
+    case BLEND_INVSRCCOLOR:
+        return GL_ONE_MINUS_SRC_COLOR;
+    case BLEND_SRCALPHA:
+        return GL_SRC_ALPHA;
+    case BLEND_INVSRCALPHA:
+        return GL_ONE_MINUS_SRC_ALPHA;
+    case BLEND_DESTALPHA:
+        return GL_DST_ALPHA;
+    case BLEND_INVDESTALPHA:
+        return GL_ONE_MINUS_DST_ALPHA;
+    case BLEND_DESTCOLOR:
+        return GL_DST_COLOR;
+    case BLEND_INVDESTCOLOR:
+        return GL_ONE_MINUS_DST_COLOR;
+    case BLEND_SRCALPHASAT:
+        return GL_SRC_ALPHA_SATURATE;
+    default:
+        return GL_ONE_MINUS_SRC_ALPHA;
+    }
 }
+
+static GLuint CompileShader(GLenum shaderType, const char* source) {
+    GLuint shader = STGL(CreateShader)(shaderType);
+    if (!shader)
+        return 0;
+
+    STGL(ShaderSource)(shader, 1, &source, NULL);
+    STGL(CompileShader)(shader);
+
+    GLint compiled = GL_FALSE;
+    STGL(GetShaderiv)(shader, GL_COMPILE_STATUS, &compiled);
+    if (compiled == GL_TRUE)
+        return shader;
+
+    char logBuf[2048] = {0};
+    GLsizei logLen = 0;
+    STGL(GetShaderInfoLog)(shader, (GLsizei)sizeof(logBuf), &logLen, logBuf);
+    printf("Shader compile failed:\n%s\n", logBuf);
+    STGL(DeleteShader)(shader);
+    return 0;
+}
+
+static GLuint BuildShaderProgram() {
+#if defined(HAVE_GLES) || defined(__EMSCRIPTEN__)
+    const char* vertexSource =
+        "attribute vec4 aPosition;\n"
+        "attribute vec4 aColor;\n"
+        "attribute vec2 aTexCoord;\n"
+        "uniform mat4 uMvp;\n"
+        "uniform mat4 uTexMatrix;\n"
+        "varying vec4 vColor;\n"
+        "varying vec2 vTexCoord;\n"
+        "void main() {\n"
+        "  gl_Position = uMvp * vec4(aPosition.xyz, 1.0);\n"
+        "  vColor = aColor;\n"
+        "  vTexCoord = (uTexMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;\n"
+        "}\n";
+
+    const char* fragmentSource =
+        "precision mediump float;\n"
+        "uniform sampler2D uTexture;\n"
+        "uniform int uColorMode;\n"
+        "varying vec4 vColor;\n"
+        "varying vec2 vTexCoord;\n"
+        "void main() {\n"
+        "  vec4 outColor = vec4(1.0);\n"
+        "  if (uColorMode == 1) {\n"
+        "    outColor = vColor;\n"
+        "  } else if (uColorMode == 2) {\n"
+        "    outColor = texture2D(uTexture, vTexCoord);\n"
+        "  } else if (uColorMode == 3) {\n"
+        "    outColor = texture2D(uTexture, vTexCoord) * vColor;\n"
+        "  }\n"
+        "  gl_FragColor = outColor;\n"
+        "}\n";
+#else
+    const char* vertexSource =
+        "#version 120\n"
+        "attribute vec4 aPosition;\n"
+        "attribute vec4 aColor;\n"
+        "attribute vec2 aTexCoord;\n"
+        "uniform mat4 uMvp;\n"
+        "uniform mat4 uTexMatrix;\n"
+        "varying vec4 vColor;\n"
+        "varying vec2 vTexCoord;\n"
+        "void main() {\n"
+        "  gl_Position = uMvp * vec4(aPosition.xyz, 1.0);\n"
+        "  vColor = aColor;\n"
+        "  vTexCoord = (uTexMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;\n"
+        "}\n";
+
+    const char* fragmentSource =
+        "#version 120\n"
+        "uniform sampler2D uTexture;\n"
+        "uniform int uColorMode;\n"
+        "varying vec4 vColor;\n"
+        "varying vec2 vTexCoord;\n"
+        "void main() {\n"
+        "  vec4 outColor = vec4(1.0);\n"
+        "  if (uColorMode == 1) {\n"
+        "    outColor = vColor;\n"
+        "  } else if (uColorMode == 2) {\n"
+        "    outColor = texture2D(uTexture, vTexCoord);\n"
+        "  } else if (uColorMode == 3) {\n"
+        "    outColor = texture2D(uTexture, vTexCoord) * vColor;\n"
+        "  }\n"
+        "  gl_FragColor = outColor;\n"
+        "}\n";
+#endif
+
+    GLuint vs = CompileShader(GL_VERTEX_SHADER, vertexSource);
+    if (!vs)
+        return 0;
+    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, fragmentSource);
+    if (!fs) {
+        STGL(DeleteShader)(vs);
+        return 0;
+    }
+
+    GLuint program = STGL(CreateProgram)();
+    if (!program) {
+        STGL(DeleteShader)(vs);
+        STGL(DeleteShader)(fs);
+        return 0;
+    }
+
+    STGL(AttachShader)(program, vs);
+    STGL(AttachShader)(program, fs);
+    STGL(BindAttribLocation)(program, ATTRIB_POSITION, "aPosition");
+    STGL(BindAttribLocation)(program, ATTRIB_COLOR, "aColor");
+    STGL(BindAttribLocation)(program, ATTRIB_TEXCOORD, "aTexCoord");
+    STGL(LinkProgram)(program);
+
+    GLint linked = GL_FALSE;
+    STGL(GetProgramiv)(program, GL_LINK_STATUS, &linked);
+    STGL(DeleteShader)(vs);
+    STGL(DeleteShader)(fs);
+    if (linked == GL_TRUE)
+        return program;
+
+    char logBuf[2048] = {0};
+    GLsizei logLen = 0;
+    STGL(GetProgramInfoLog)(program, (GLsizei)sizeof(logBuf), &logLen, logBuf);
+    printf("Program link failed:\n%s\n", logBuf);
+    STGL(DeleteProgram)(program);
+    return 0;
+}
+
+struct VertexLayout {
+    int positionComponents;
+    size_t positionOffset;
+    bool hasColor;
+    size_t colorOffset;
+    bool hasTexCoord;
+    size_t texCoordOffset;
+    size_t packedStride;
+};
+
+static bool BuildVertexLayout(DWORD fvf, VertexLayout* outLayout) {
+    VertexLayout layout = {};
+    size_t cursor = 0;
+
+    if (fvf & FVF_XYZ) {
+        layout.positionComponents = 3;
+        layout.positionOffset = cursor;
+        cursor += sizeof(float) * 3;
+    }
+    if (fvf & FVF_XYZW) {
+        layout.positionComponents = 4;
+        layout.positionOffset = cursor;
+        cursor += sizeof(float) * 4;
+    }
+    if (fvf & FVF_XYZRHW) {
+        // Match legacy fixed-function path: transformed vertices provided x/y in screen space.
+        layout.positionComponents = 2;
+        layout.positionOffset = cursor;
+        cursor += sizeof(float) * 4;
+    }
+    if (fvf & FVF_DIFFUSE) {
+        layout.hasColor = true;
+        layout.colorOffset = cursor;
+        cursor += sizeof(DWORD);
+    }
+    if (fvf & FVF_TEX0) {
+        layout.hasTexCoord = true;
+        layout.texCoordOffset = cursor;
+        cursor += sizeof(float) * 2;
+    }
+    if (fvf & FVF_TEX1) {
+        layout.hasTexCoord = true;
+        layout.texCoordOffset = cursor;
+        cursor += sizeof(float) * 2;
+    }
+
+    layout.packedStride = cursor;
+    if (layout.positionComponents <= 0)
+        return false;
+
+    *outLayout = layout;
+    return true;
+}
+
+struct TextVertex {
+    float x, y, z, rhw;
+    DWORD color;
+    float u, v;
+};
+} // namespace
+
+void RenderDevice::ActivateWorldMatrix() {}
+void RenderDevice::DeactivateWorldMatrix() {}
 
 uint32_t GetStrideFromFVF(DWORD fvf) {
-    uint32_t stride = 0;
-    if (fvf & FVF_DIFFUSE)
-        stride += sizeof(DWORD);
-    if (fvf & FVF_NORMAL)
-        stride += 3 * sizeof(float);
-    if (fvf & FVF_XYZ)
-        stride += 3 * sizeof(float);
-    if (fvf & FVF_XYZRHW)
-        stride += 4 * sizeof(float);
-    if (fvf & FVF_XYZW)
-        stride += 4 * sizeof(float);
-    if (fvf & FVF_TEX0)
-        stride += 2 * sizeof(float);
-
-    return stride;
+    VertexLayout layout = {};
+    if (BuildVertexLayout(fvf, &layout))
+        return (uint32_t)layout.packedStride;
+    return 0;
 }
 
 // RenderDevice
-RenderDevice::RenderDevice() {
+RenderDevice::RenderDevice()
+    : fvf(0), mInitialized(false), mAlphaBlendEnabled(false), mSrcBlend(BLEND_SRCALPHA), mDstBlend(BLEND_INVSRCALPHA),
+      mShaderProgram(0), mDynamicVbo(0), mUniformMvp(-1), mUniformTexture(-1), mUniformTexMatrix(-1),
+      mUniformColorMode(-1) {
     for (int i = 0; i < 8; i++) {
         colorop[i] = 0;
         colorarg1[i] = 0;
         colorarg2[i] = 0;
         alphaop[i] = 0;
+        buffer[i] = NULL;
+        offset[i] = 0;
+        stride[i] = 0;
     }
-#ifdef USEGLM
     mView = glm::mat4(1.0f);
     mWorld = glm::mat4(1.0f);
     mProj = glm::mat4(1.0f);
     mText = glm::mat4(1.0f);
     mInv = glm::mat4(-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, +1, 0, 0, 0, 0, 1);
-#else
-    set_identity(mView.m);
-    set_identity(mWorld.m);
-    set_identity(mProj.m);
-    set_identity(mText.m);
-#endif
 }
 
 RenderDevice::~RenderDevice() {}
+
+bool RenderDevice::EnsureInitialized() {
+    if (mInitialized)
+        return true;
+
+    if (!EnsureGLFunctions())
+        return false;
+
+    mShaderProgram = BuildShaderProgram();
+    if (!mShaderProgram)
+        return false;
+
+    mUniformMvp = STGL(GetUniformLocation)(mShaderProgram, "uMvp");
+    mUniformTexture = STGL(GetUniformLocation)(mShaderProgram, "uTexture");
+    mUniformTexMatrix = STGL(GetUniformLocation)(mShaderProgram, "uTexMatrix");
+    mUniformColorMode = STGL(GetUniformLocation)(mShaderProgram, "uColorMode");
+
+    STGL(GenBuffers)(1, &mDynamicVbo);
+    if (!mDynamicVbo) {
+        printf("Failed to create dynamic vertex buffer\n");
+        return false;
+    }
+
+    STGL(UseProgram)(mShaderProgram);
+    STGL(Uniform1i)(mUniformTexture, 0);
+    STGL(UseProgram)(0);
+
+    mInitialized = true;
+    return true;
+}
+
+glm::mat4 RenderDevice::BuildScreenProjection() const {
+    GLint vp[4] = {0, 0, 640, 480};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    const float aspect = (vp[3] > 0) ? (static_cast<float>(vp[2]) / static_cast<float>(vp[3])) : (4.0f / 3.0f);
+    const float projWidth = SCREEN_VIRTUAL_HEIGHT * aspect;
+    return glm::ortho(0.0f, projWidth, SCREEN_VIRTUAL_HEIGHT, 0.0f, SCREEN_NEAR_Z, SCREEN_FAR_Z);
+}
+
+void RenderDevice::ApplyBlendState(bool forceEnable) {
+    const bool blendEnabled = forceEnable || mAlphaBlendEnabled;
+    if (blendEnabled) {
+        glEnable(GL_BLEND);
+        glBlendFunc(MapBlendMode(mSrcBlend), MapBlendMode(mDstBlend));
+    } else {
+        glDisable(GL_BLEND);
+    }
+}
+
+int RenderDevice::ResolveColorMode(bool hasTexture, bool hasColor) const {
+    if (!hasTexture)
+        return hasColor ? 1 : 0;
+
+    const UINT op = colorop[0];
+    if (op == TOP_MODULATE)
+        return hasColor ? 3 : 2;
+    if (op == TOP_SELECTARG1) {
+        if ((colorarg1[0] == TA_DIFFUSE) && hasColor)
+            return 1;
+        return 2;
+    }
+    if (op == TOP_SELECTARG2) {
+        if ((colorarg2[0] == TA_DIFFUSE) && hasColor)
+            return 1;
+        return 2;
+    }
+
+    return hasColor ? 3 : 2;
+}
 
 HRESULT RenderDevice::SetTransform(TransformState State, glm::mat4* pMatrix) {
     switch (State) {
@@ -415,12 +770,6 @@ HRESULT RenderDevice::SetTransform(TransformState State, glm::mat4* pMatrix) {
     case TS_TEXTURE3:
     case TS_TEXTURE4:
         mText = *pMatrix;
-        glMatrixMode(GL_TEXTURE);
-#ifdef USEGLM
-        glLoadMatrixf(glm::value_ptr(mText));
-#else
-        glLoadMatrixf(mText.m);
-#endif
         break;
     default:
         printf("Unhandled Matrix SetTransform(%X, %p)\n", State, pMatrix);
@@ -480,20 +829,17 @@ HRESULT RenderDevice::SetRenderState(RenderStateType State, int Value) {
             break;
         }
         break;
-    case RS_SRCBLENDALPHA:
-        break;
-    case RS_DESTBLENDALPHA:
-        break;
     case RS_ALPHABLENDENABLE:
-        if (Value) {
-            glEnable(GL_ALPHA_TEST);
-        } else {
-            glDisable(GL_ALPHA_TEST);
-        }
+        mAlphaBlendEnabled = (Value != 0);
         break;
     case RS_SRCBLEND:
+        mSrcBlend = Value;
         break;
     case RS_DESTBLEND:
+        mDstBlend = Value;
+        break;
+    case RS_SRCBLENDALPHA:
+    case RS_DESTBLENDALPHA:
         break;
     default:
         printf("Unhandled Render State %X=%d\n", State, Value);
@@ -503,8 +849,8 @@ HRESULT RenderDevice::SetRenderState(RenderStateType State, int Value) {
 
 HRESULT RenderDevice::DrawPrimitive(PrimitiveType PrimitiveType, UINT StartVertex, UINT PrimitiveCount) {
     const GLenum primgl[] = {GL_POINTS, GL_LINES, GL_LINE_STRIP, GL_TRIANGLES, GL_TRIANGLE_STRIP, GL_TRIANGLE_FAN};
-    const GLenum prim1[] = {1, 2, 1, 3, 1, 1};
-    const GLenum prim2[] = {0, 0, 1, 0, 2, 2};
+    const UINT prim1[] = {1, 2, 1, 3, 1, 1};
+    const UINT prim2[] = {0, 0, 1, 0, 2, 2};
     if (PrimitiveType < PT_POINTLIST || PrimitiveType > PT_TRIANGLEFAN) {
         printf("Unsupported Primitive %d\n", PrimitiveType);
         return E_FAIL;
@@ -512,87 +858,71 @@ HRESULT RenderDevice::DrawPrimitive(PrimitiveType PrimitiveType, UINT StartVerte
     if (PrimitiveCount == 0)
         return S_OK;
 
-    GLenum mode = primgl[PrimitiveType - 1];
-    bool transf = ((fvf & FVF_XYZRHW) == 0);
-    char* ptr = (char*)buffer[0]->buffer.buffer;
-    bool vtx = false, col = false, tex0 = false, tex1 = false;
-    if (fvf & FVF_XYZ) {
-        glVertexPointer(3, GL_FLOAT, stride[0], ptr);
-        ptr += 3 * sizeof(float);
-        vtx = true;
-    };
-    if (fvf & FVF_XYZW) {
-        glVertexPointer(4, GL_FLOAT, stride[0], ptr);
-        ptr += 4 * sizeof(float);
-        vtx = true;
-    };
-    if (fvf & FVF_XYZRHW) {
-        glVertexPointer(2, GL_FLOAT, stride[0], ptr);
-        ptr += 4 * sizeof(float);
-        vtx = true;
-    };
-    if (fvf & FVF_DIFFUSE) {
-        glColorPointer(4, GL_UNSIGNED_BYTE, stride[0], ptr);
-        ptr += sizeof(DWORD);
-        col = true;
-    }
-    if (fvf & FVF_TEX0) {
-        glTexCoordPointer(2, GL_FLOAT, stride[0], ptr);
-        ptr += 2 * sizeof(float);
-        tex0 = true;
-    }
-    if (fvf & FVF_TEX1) {
-        glTexCoordPointer(2, GL_FLOAT, stride[0], ptr);
-        ptr += 2 * sizeof(float);
-        tex1 = true;
+    if (!buffer[0] || !buffer[0]->buffer.buffer)
+        return E_FAIL;
+    if (!EnsureInitialized())
+        return E_FAIL;
+
+    VertexLayout layout = {};
+    if (!BuildVertexLayout(fvf, &layout)) {
+        printf("Unsupported FVF 0x%X\n", fvf);
+        return E_FAIL;
     }
 
-    if (vtx)
-        glEnableClientState(GL_VERTEX_ARRAY);
-    else
-        glDisableClientState(GL_VERTEX_ARRAY);
+    const uint32_t streamStride = stride[0] ? stride[0] : GetStrideFromFVF(fvf);
+    if (!streamStride)
+        return E_FAIL;
 
+    const UINT vertexCount = prim1[PrimitiveType - 1] * PrimitiveCount + prim2[PrimitiveType - 1];
+    const size_t byteOffset = (size_t)offset[0] + ((size_t)streamStride * StartVertex);
+    const size_t uploadBytes = (size_t)streamStride * vertexCount;
+    const char* src = (const char*)buffer[0]->buffer.buffer + byteOffset;
+
+    STGL(BindBuffer)(GL_ARRAY_BUFFER, mDynamicVbo);
+    STGL(BufferData)(GL_ARRAY_BUFFER, (GLsizeiptr)uploadBytes, src, GL_DYNAMIC_DRAW);
+
+    const bool hasTextureCoords = layout.hasTexCoord && (colorop[0] > TOP_DISABLE);
+    bool hasVertexColor = layout.hasColor;
     if ((colorop[0] == TOP_SELECTARG1) && (colorarg1[0] != TA_DIFFUSE))
-        col = false;
+        hasVertexColor = false;
     if ((colorop[0] == TOP_SELECTARG2) && (colorarg2[0] != TA_DIFFUSE))
-        col = false;
-    /*    if((colorop[0]==D3DTOP_SELECTARG1) && (colorarg1[0]==D3DTA_TEXTURE)) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    } else*/
-    {
-        glDisable(GL_BLEND);
-    }
+        hasVertexColor = false;
 
-    if (col)
-        glEnableClientState(GL_COLOR_ARRAY);
-    else {
-        glDisableClientState(GL_COLOR_ARRAY);
-        glColor3f(1.0f, 1.0f, 1.0f);
-    }
+    const int colorMode = ResolveColorMode(hasTextureCoords, hasVertexColor);
+    const bool transformed = ((fvf & FVF_XYZRHW) == 0);
+    const glm::mat4 mvp = transformed ? (mInv * mProj * mView * mWorld) : BuildScreenProjection();
 
-    if (tex0 || tex1) {
-        if (colorop[0] <= TOP_DISABLE) {
-            glDisable(GL_TEXTURE_2D);
-            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-            glDisable(GL_BLEND);
-        } else {
-            glEnable(GL_TEXTURE_2D);
-            glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-            glEnable(GL_BLEND);
-        }
+    STGL(UseProgram)(mShaderProgram);
+    STGL(ActiveTexture)(GL_TEXTURE0);
+    STGL(UniformMatrix4fv)(mUniformMvp, 1, GL_FALSE, glm::value_ptr(mvp));
+    STGL(UniformMatrix4fv)(mUniformTexMatrix, 1, GL_FALSE, glm::value_ptr(mText));
+    STGL(Uniform1i)(mUniformColorMode, colorMode);
+
+    STGL(EnableVertexAttribArray)(ATTRIB_POSITION);
+    STGL(VertexAttribPointer)(ATTRIB_POSITION, layout.positionComponents, GL_FLOAT, GL_FALSE, (GLsizei)streamStride,
+                              (const void*)(uintptr_t)layout.positionOffset);
+
+    if (hasVertexColor) {
+        STGL(EnableVertexAttribArray)(ATTRIB_COLOR);
+        STGL(VertexAttribPointer)(ATTRIB_COLOR, 4, GL_UNSIGNED_BYTE, GL_TRUE, (GLsizei)streamStride,
+                                  (const void*)(uintptr_t)layout.colorOffset);
     } else {
-        glDisable(GL_TEXTURE_2D);
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        STGL(DisableVertexAttribArray)(ATTRIB_COLOR);
+        STGL(VertexAttrib4f)(ATTRIB_COLOR, 1.0f, 1.0f, 1.0f, 1.0f);
     }
 
-    if (transf)
-        ActivateWorldMatrix();
+    if (hasTextureCoords) {
+        STGL(EnableVertexAttribArray)(ATTRIB_TEXCOORD);
+        STGL(VertexAttribPointer)(ATTRIB_TEXCOORD, 2, GL_FLOAT, GL_FALSE, (GLsizei)streamStride,
+                                  (const void*)(uintptr_t)layout.texCoordOffset);
+    } else {
+        STGL(DisableVertexAttribArray)(ATTRIB_TEXCOORD);
+        STGL(VertexAttrib2f)(ATTRIB_TEXCOORD, 0.0f, 0.0f);
+    }
 
-    glDrawArrays(mode, StartVertex, prim1[PrimitiveType - 1] * PrimitiveCount + prim2[PrimitiveType - 1]);
+    ApplyBlendState(hasTextureCoords);
+    glDrawArrays(primgl[PrimitiveType - 1], 0, (GLsizei)vertexCount);
 
-    if (transf)
-        DeactivateWorldMatrix();
     return S_OK;
 }
 
@@ -613,22 +943,20 @@ HRESULT RenderDevice::SetTextureStageState(DWORD Stage, TextureStageStateType Ty
         colorarg2[Stage] = Value;
         break;
     case TSS_ALPHAOP:
+        alphaop[Stage] = Value;
         break;
     case TSS_ALPHAARG1:
-        break;
     case TSS_ALPHAARG2:
         break;
     default:
         printf("Unhandled SetTextureStageState(%d, 0x%X, 0x%X)\n", Stage, Type, Value);
     }
 
-    /*    glActiveTexture(GL_TEXTURE0+0);
-    glClientActiveTexture(GL_TEXTURE0+0);*/
-
     return S_OK;
 }
 
 HRESULT RenderDevice::SetSamplerState(DWORD Sampler, SamplerStateType Type, DWORD Value) {
+    (void)Sampler;
     GLint wrap = GL_REPEAT;
     switch (Value) {
     case TADDRESS_CLAMP:
@@ -661,7 +989,10 @@ HRESULT RenderDevice::SetSamplerState(DWORD Sampler, SamplerStateType Type, DWOR
 
 HRESULT RenderDevice::SetTexture(DWORD Sampler, GpuTexture* pTexture) {
     (void)Sampler;
-    pTexture->Bind();
+    if (pTexture)
+        pTexture->Bind();
+    else
+        glBindTexture(GL_TEXTURE_2D, 0);
     return S_OK;
 }
 
@@ -673,7 +1004,7 @@ HRESULT RenderDevice::Clear(DWORD Count, const ClearRect* pRects, DWORD Flags, C
         clearval |= GL_STENCIL_BUFFER_BIT;
     }
     if (Flags & CLEAR_ZBUFFER) {
-        glClearDepth(Z);
+        SetClearDepthValue(Z);
         clearval |= GL_DEPTH_BUFFER_BIT;
     }
     if (Flags & CLEAR_TARGET) {
@@ -705,7 +1036,10 @@ HRESULT RenderDevice::Clear(DWORD Count, const ClearRect* pRects, DWORD Flags, C
 }
 
 HRESULT RenderDevice::CreateVertexBuffer(UINT Length, DWORD Usage, DWORD FVF, PoolType Pool,
-                                             VertexBuffer** ppVertexBuffer, HANDLE* pSharedHandle) {
+                                         VertexBuffer** ppVertexBuffer, HANDLE* pSharedHandle) {
+    (void)Usage;
+    (void)Pool;
+    (void)pSharedHandle;
     *ppVertexBuffer = new VertexBuffer(Length, FVF);
 
     return S_OK;
@@ -726,12 +1060,17 @@ HRESULT RenderDevice::SetFVF(DWORD FVF) {
 
 VertexBuffer::VertexBuffer(uint32_t size, uint32_t fvf) {
     buffer.fvf = fvf;
+    buffer.size = size;
     buffer.buffer = malloc(size);
 }
 
 VertexBuffer::~VertexBuffer() { Release(); }
 
 HRESULT VertexBuffer::Lock(UINT OffsetToLock, UINT SizeToLock, void** ppbData, DWORD Flags) {
+    (void)SizeToLock;
+    (void)Flags;
+    if (!buffer.buffer)
+        return E_FAIL;
     *ppbData = (void*)((char*)buffer.buffer + OffsetToLock);
     return S_OK;
 }
@@ -741,11 +1080,16 @@ HRESULT VertexBuffer::Unlock() {
 }
 
 HRESULT VertexBuffer::Release() {
-    free(buffer.buffer);
+    if (buffer.buffer) {
+        free(buffer.buffer);
+        buffer.buffer = NULL;
+    }
     return S_OK;
 }
 
-TextHelper::TextHelper(TTF_Font* font, GLuint sprite, int size) : m_sprite(sprite), m_size(size), m_posx(0), m_posy(0) {
+TextHelper::TextHelper(TTF_Font* font, GLuint sprite, int size)
+    : m_sprite(sprite), m_size(size), m_displayScale(1.0f), m_fontsize(0), m_posx(0), m_posy(0), m_inv(1.0f),
+      m_texture(0), m_sizew(0), m_sizeh(0), m_vertexBuffer(NULL), m_vertexCapacity(0) {
     // set colors
     m_forecol[0] = m_forecol[1] = m_forecol[2] = m_forecol[3] = 1.0f;
     // setup texture (font is loaded at high pt size for sharp glyphs)
@@ -764,7 +1108,7 @@ TextHelper::TextHelper(TTF_Font* font, GLuint sprite, int size) : m_sprite(sprit
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_sizew, m_sizeh, 0, GL_RGBA, GL_UNSIGNED_BYTE, tmp);
     free(tmp);
     SDL_Color forecol = {255, 255, 255, 255};
-    m_inv = 1.0 / (float)m_sizew;
+    m_inv = 1.0f / (float)m_sizew;
     for (int i = 0; i < 16; i++) {
         for (int j = 0; j < 16; j++) {
             char text[2] = {(char)(i * 16 + j), 0};
@@ -797,7 +1141,36 @@ TextHelper::TextHelper(TTF_Font* font, GLuint sprite, int size) : m_sprite(sprit
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-TextHelper::~TextHelper() { glDeleteTextures(1, &m_texture); }
+TextHelper::~TextHelper() {
+    if (m_texture)
+        glDeleteTextures(1, &m_texture);
+    if (m_vertexBuffer) {
+        delete m_vertexBuffer;
+        m_vertexBuffer = NULL;
+    }
+}
+
+bool TextHelper::EnsureVertexCapacity(uint32_t requiredVertices) {
+    if (m_vertexBuffer && (requiredVertices <= m_vertexCapacity))
+        return true;
+
+    uint32_t newCapacity = 64;
+    while (newCapacity < requiredVertices)
+        newCapacity <<= 1;
+
+    RenderDevice* dev = GetRenderDevice();
+    VertexBuffer* newBuffer = NULL;
+    if (FAILED(dev->CreateVertexBuffer((UINT)(newCapacity * sizeof(TextVertex)), VB_USAGE_WRITEONLY,
+                                       FVF_XYZRHW | FVF_DIFFUSE | FVF_TEX1, POOL_DEFAULT, &newBuffer, NULL)))
+        return false;
+
+    if (m_vertexBuffer)
+        delete m_vertexBuffer;
+
+    m_vertexBuffer = newBuffer;
+    m_vertexCapacity = newCapacity;
+    return true;
+}
 
 void TextHelper::SetInsertionPos(int x, int y) {
     m_posx = x;
@@ -810,40 +1183,84 @@ void TextHelper::SetDisplaySize(int size) {
 }
 
 void TextHelper::DrawTextLine(const wchar_t* line) {
-    // Draw it (scale quads by m_displayScale so high-res texture stays sharp)
-    glDisable(GL_DEPTH_TEST);
-    glEnable(GL_TEXTURE_2D);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    if (!line) {
+        m_posy += m_size;
+        return;
+    }
+
+    uint32_t glyphCount = 0;
+    while (line[glyphCount] != 0)
+        ++glyphCount;
+
+    if (glyphCount == 0) {
+        m_posy += m_size;
+        return;
+    }
+
+    const uint32_t vertexCount = glyphCount * 6;
+    if (!EnsureVertexCapacity(vertexCount)) {
+        m_posy += m_size;
+        return;
+    }
+
+    TextVertex* pVertices = NULL;
+    if (FAILED(m_vertexBuffer->Lock(0, vertexCount * sizeof(TextVertex), (void**)&pVertices, 0))) {
+        m_posy += m_size;
+        return;
+    }
+
+    const DWORD color = RGBA_MAKE((BYTE)(m_forecol[0] * 255.0f), (BYTE)(m_forecol[1] * 255.0f),
+                                  (BYTE)(m_forecol[2] * 255.0f), (BYTE)(m_forecol[3] * 255.0f));
+    float posx = static_cast<float>(m_posx);
+    const float posy = static_cast<float>(m_posy);
+    uint32_t out = 0;
+
+    for (uint32_t i = 0; i < glyphCount; i++) {
+        const unsigned char ch = (unsigned char)(line[i] & 0xff);
+        const float col = (float)(ch % 16);
+        const float lin = (float)(ch / 16);
+        const float w = m_as[ch] * m_displayScale;
+        const float h = m_fontsize * m_displayScale;
+
+        const float u0 = (col * m_fontsize + 0.0f) * m_inv;
+        const float u1 = (col * m_fontsize + (float)m_as[ch]) * m_inv;
+        const float v0 = (lin * m_fontsize + 0.0f) * m_inv;
+        const float v1 = (lin * m_fontsize + (float)(m_fontsize - 1)) * m_inv;
+
+        pVertices[out++] = {posx, posy, 0.5f, 1.0f, color, u0, v0};
+        pVertices[out++] = {posx + w, posy, 0.5f, 1.0f, color, u1, v0};
+        pVertices[out++] = {posx + w, posy + h, 0.5f, 1.0f, color, u1, v1};
+
+        pVertices[out++] = {posx, posy, 0.5f, 1.0f, color, u0, v0};
+        pVertices[out++] = {posx + w, posy + h, 0.5f, 1.0f, color, u1, v1};
+        pVertices[out++] = {posx, posy + h, 0.5f, 1.0f, color, u0, v1};
+
+        posx += w;
+    }
+
+    m_vertexBuffer->Unlock();
+
+    RenderDevice* dev = GetRenderDevice();
+    dev->SetRenderState(RS_ZENABLE, FALSE);
+    dev->SetRenderState(RS_CULLMODE, CULL_NONE);
+    dev->SetRenderState(RS_ALPHABLENDENABLE, TRUE);
+    dev->SetRenderState(RS_SRCBLEND, BLEND_SRCALPHA);
+    dev->SetRenderState(RS_DESTBLEND, BLEND_INVSRCALPHA);
+    dev->SetTextureStageState(0, TSS_COLOROP, TOP_MODULATE);
+    dev->SetTextureStageState(0, TSS_COLORARG1, TA_TEXTURE);
+    dev->SetTextureStageState(0, TSS_COLORARG2, TA_DIFFUSE);
 
     glBindTexture(GL_TEXTURE_2D, m_texture);
-    glColor4fv(m_forecol);
-    glBegin(GL_QUADS);
-    char ch;
-    int i = 0;
-    float posx = m_posx;
-    while ((ch = line[i])) {
-        float col = ch % 16, lin = ch / 16;
-        float w = m_as[ch] * m_displayScale;
-        float h = m_fontsize * m_displayScale;
-        glTexCoord2f((col * m_fontsize + 0) * m_inv, (lin * m_fontsize + 0) * m_inv);
-        glVertex2f(posx, m_posy);
-        glTexCoord2f((col * m_fontsize + m_as[ch]) * m_inv, (lin * m_fontsize + 0) * m_inv);
-        glVertex2f(posx + w, m_posy);
-        glTexCoord2f((col * m_fontsize + m_as[ch]) * m_inv, (lin * m_fontsize + m_fontsize - 1) * m_inv);
-        glVertex2f(posx + w, m_posy + h);
-        glTexCoord2f((col * m_fontsize + 0) * m_inv, (lin * m_fontsize + m_fontsize - 1) * m_inv);
-        glVertex2f(posx, m_posy + h);
-        posx += w;
-        i++;
-    }
-    glEnd();
-    glBindTexture(GL_TEXTURE_2D, 0);
-    m_posy += m_size;
+    dev->SetStreamSource(0, m_vertexBuffer, 0, sizeof(TextVertex));
+    dev->SetFVF(FVF_XYZRHW | FVF_DIFFUSE | FVF_TEX1);
+    dev->DrawPrimitive(PT_TRIANGLELIST, 0, vertexCount / 3);
 
-    glDisable(GL_BLEND);
-    glDisable(GL_TEXTURE_2D);
-    glEnable(GL_DEPTH_TEST);
+    dev->SetTextureStageState(0, TSS_COLOROP, TOP_DISABLE);
+    dev->SetRenderState(RS_ALPHABLENDENABLE, FALSE);
+    dev->SetRenderState(RS_ZENABLE, TRUE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    m_posy += m_size;
 }
 
 void TextHelper::DrawFormattedTextLine(const std::wstring& line) {

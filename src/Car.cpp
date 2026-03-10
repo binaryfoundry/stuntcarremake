@@ -346,8 +346,10 @@ extern int GL_MSAA;
 
 void DrawCockpit(RenderDevice* pDevice) {
 #ifdef linux
+#ifdef GL_MULTISAMPLE
     if (GL_MSAA)
         glDisable(GL_MULTISAMPLE);
+#endif
 #endif
     /* Cockpit is drawn in ortho space: X in [0, projWidth], Y in [0, 480]. Use base coords + offset, no pixel scaling. */
     float base_width = wideScreen ? static_cast<float>(BASE_WIDTH_WIDESCREEN) : static_cast<float>(BASE_WIDTH_STANDARD);
@@ -515,7 +517,9 @@ void DrawCockpit(RenderDevice* pDevice) {
     pDevice->SetRenderState(RS_ALPHABLENDENABLE, FALSE);
     //pDevice->SetTextureStageState(0, TSS_COLOROP, TOP_DISABLE);
 #ifdef linux
+#ifdef GL_MULTISAMPLE
     if (GL_MSAA)
         glEnable(GL_MULTISAMPLE);
+#endif
 #endif
 }

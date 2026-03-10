@@ -1935,9 +1935,6 @@ static void ApplyWindowLayout(int windowWidth, int windowHeight, bool logLayout)
 
     wideScreen = (((static_cast<float>(windowWidth) / screenScale) - 640.0f) >= 80.0f) ? 1 : 0;
 
-    const float virtualWidth = wideScreen ? 800.0f : 640.0f;
-    const float virtualHeight = 480.0f;
-    
     /* Use the whole rendering area instead of letterboxing */
     int viewportW = windowWidth;
     int viewportH = windowHeight;
@@ -1945,14 +1942,6 @@ static void ApplyWindowLayout(int windowWidth, int windowHeight, bool logLayout)
     int viewportY = 0;
 
     glViewport(viewportX, viewportY, viewportW, viewportH);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    
-    /* Adjust orthographic projection to match the new aspect ratio */
-    float projWidth = virtualHeight * (static_cast<float>(windowWidth) / static_cast<float>(windowHeight));
-    glOrtho(0, projWidth, virtualHeight, 0, 0, FURTHEST_Z);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
 
     SetPerspectiveDepthRange(&pDevice, PERSPECTIVE_NEAR, PERSPECTIVE_FAR);
 
@@ -2307,6 +2296,16 @@ int main(int argc, const char** argv) {
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 5);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+#ifdef USE_SDL2
+#if defined(__EMSCRIPTEN__) || defined(HAVE_GLES)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#else
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+#endif
+#endif
 
 #if defined(PANDORA)
     int revision = 5;
@@ -2468,10 +2467,6 @@ int main(int argc, const char** argv) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
     glEnable(GL_DEPTH_TEST);
-    glAlphaFunc(GL_NOTEQUAL, 0);
-    //    glEnable(GL_ALPHA_TEST);
-    //    glShadeModel(GL_FLAT);
-    glDisable(GL_LIGHTING);
     // Disable texture mapping by default (only DrawTrack() enables it)
     pDevice.SetTextureStageState(0, TSS_COLOROP, TOP_DISABLE);
 

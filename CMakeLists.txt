@@ -51,6 +51,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(EMSCRIPTEN)
+  target_compile_definitions(stuntcarracer PRIVATE HAVE_GLES)
+
   # Output .html so the shell (package/template.html) is used and build dir has a runnable page.
   set(CMAKE_EXECUTABLE_SUFFIX ".html")
 
@@ -61,7 +63,6 @@ if(EMSCRIPTEN)
   )
   # Allow heap to grow at runtime to avoid OOM (game needs ~18MB+ with preloaded assets).
   target_link_options(stuntcarracer PRIVATE
-    "SHELL:-s LEGACY_GL_EMULATION=1"
     "SHELL:-s USE_SDL=2"
     "SHELL:-s USE_SDL_TTF=2"
     "SHELL:-s DISABLE_DEPRECATED_FIND_EVENT_TARGET_BEHAVIOR=0"

@@ -8,6 +8,11 @@
 #include <stdio.h>
 #include <time.h>
 #include <string.h>
+
+#if defined(__EMSCRIPTEN__) && !defined(HAVE_GLES)
+#define HAVE_GLES
+#endif
+
 #ifdef USE_SDL2
 #if __has_include(<SDL.h>)
 #include <SDL.h>
@@ -26,10 +31,15 @@
 #define APIENTRY __stdcall
 #endif
 #include <SDL_opengl.h>
+#if __has_include(<SDL_opengl_glext.h>)
+#include <SDL_opengl_glext.h>
+#elif __has_include(<SDL2/SDL_opengl_glext.h>)
+#include <SDL2/SDL_opengl_glext.h>
+#endif
 #endif
 #else
 #ifdef HAVE_GLES
-#include <GLES/gl.h>
+#include <GLES2/gl2.h>
 #else
 #include <GL/gl.h>
 #endif
@@ -861,6 +871,11 @@ class RenderDevice {
     void DeactivateWorldMatrix();
 
   private:
+    bool EnsureInitialized();
+    void ApplyBlendState(bool forceEnable);
+    glm::mat4 BuildScreenProjection() const;
+    int ResolveColorMode(bool hasTexture, bool hasColor) const;
+
     UINT colorop[8];
     UINT alphaop[8];
     UINT colorarg1[8];
@@ -870,6 +885,16 @@ class RenderDevice {
     uint32_t offset[8];
     uint32_t stride[8];
     DWORD fvf;
+    bool mInitialized;
+    bool mAlphaBlendEnabled;
+    int mSrcBlend;
+    int mDstBlend;
+    GLuint mShaderProgram;
+    GLuint mDynamicVbo;
+    GLint mUniformMvp;
+    GLint mUniformTexture;
+    GLint mUniformTexMatrix;
+    GLint mUniformColorMode;
 };
 
 class TextHelper {
@@ -885,6 +910,8 @@ class TextHelper {
     void SetForegroundColor(glm::vec4 clr);
 
   private:
+    bool EnsureVertexCapacity(uint32_t requiredVertices);
+
     GLuint m_sprite;
     int m_size;           // display line height (for layout)
     float m_displayScale; // display size / font texture size, for sharp scaling
@@ -895,6 +922,8 @@ class TextHelper {
     float m_forecol[4];
     GLuint m_texture;
     int m_sizew, m_sizeh;
+    VertexBuffer* m_vertexBuffer;
+    uint32_t m_vertexCapacity;
 };
 
 RenderDevice* GetRenderDevice();
