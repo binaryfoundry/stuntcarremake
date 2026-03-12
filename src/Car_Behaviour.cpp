@@ -46,6 +46,7 @@
 #include "platform_sdl_gl.h"
 
 #include <stdlib.h>
+#include <vector>
 
 #include "StuntCarRacer.h"
 #include "Car_Behaviour.h"
@@ -289,6 +290,8 @@ static void UpdateEngineRevs(void);
 static void DrawDustClouds(void);
 static void DrawSparks(void);
 static void SetWheelRotationSpeed();
+static void CarBehaviourActiveInstance(DWORD input, long* x, long* y, long* z, long* x_angle, long* y_angle,
+                                       long* z_angle, float stepSeconds);
 void ResetEngineAudioState(void);
 
 #ifdef USE_AMIGA_RECORDING
@@ -446,10 +449,8 @@ extern long HalfALapPiece;
 
 long INITIALISE_PLAYER = TRUE;
 
-void CarBehaviour(DWORD input, long* x, long* y, long* z, long* x_angle, long* y_angle, long* z_angle,
-                 float stepSeconds) {
-    static long first_time = TRUE;
-
+static void CarBehaviourActiveInstance(DWORD input, long* x, long* y, long* z, long* x_angle, long* y_angle,
+                                       long* z_angle, float stepSeconds) {
     g_physicsStepScale =
         (stepSeconds > 0.0f) ? (stepSeconds / (float)PHYSICS_REFERENCE_STEP_SECONDS) : 1.0f;
 
@@ -524,8 +525,6 @@ void CarBehaviour(DWORD input, long* x, long* y, long* z, long* x_angle, long* y
     // CarBehaviour (i.e. clockwise becomes anti-clockwise or vice-versa)
     *x_angle = (-player_x_angle & (MAX_ANGLE - 1));
     *z_angle = (-player_z_angle & (MAX_ANGLE - 1));
-
-    first_time = FALSE;
 
     //VALUE1++;        // frame counter
 }
@@ -1073,14 +1072,18 @@ static void CalculateIfCarOffRoad(long* height) {
 
 // current surface co-ords
 static long sx1, sy1, sz1, sx2, sy2, sz2, sx3, sy3, sz3, sx4, sy4, sz4;
+static long g_roadHeightPiece = -1, g_roadHeightSegment = -1;
+static long g_roadHeightFirstTime = TRUE, g_roadHeightPrevTrackID = NO_TRACK;
 
 static void CalculateWorldRoadHeight(long wheel, long x, long z, long* y_out) {
     // starts with the piece/surface that was used last time
     // this avoids locating the wrong map square,
     // e.g. for diagonal pieces that run into adjacent squares
 
-    static long piece = -1, segment = -1;
-    static long first_time = TRUE, prevTrackID = NO_TRACK;
+    long& piece = g_roadHeightPiece;
+    long& segment = g_roadHeightSegment;
+    long& first_time = g_roadHeightFirstTime;
+    long& prevTrackID = g_roadHeightPrevTrackID;
 
     //fprintf(out, "CalculateWorldRoadHeight\n");
 
@@ -2159,6 +2162,7 @@ static void CalculateXAcceleration(void) {
 /*    ======================================================================================= */
 
 static long y_angle_difference, difference_angle, pos_difference_angle;
+static long g_steeringPiece = 0;
 
 static void CalculateSteering(void) {
     // basically affects player_y_angle
@@ -2167,7 +2171,7 @@ static void CalculateSteering(void) {
     // reason why player_y_angle sometimes needs direct adjustment:-
     //       to give a one-off adjustment - adjusting the acceleration has a continuing effect
 
-    static long piece = 0;
+    long& piece = g_steeringPiece;
     long rx, rz;
     long section_y_angle, scaled_pos_difference_angle;
     long left_hand_bend, steering_amount, section_steering_amount;
@@ -3279,6 +3283,277 @@ static long wheel_right_step_remainder = 0;
 static long engine_revs_step_remainder = 0;
 static int pendingEngineSoundIndex = -1;
 static int pendingEngineSoundIndexCount = 0;
+
+#ifdef USE_AMIGA_RECORDING
+#define CAR_BEHAVIOUR_OPTIONAL_AMIGA_FIELDS(X) \
+    X(bool, ReplayAmigaRecording)              \
+    X(bool, StartOfAmigaRecording)             \
+    X(long, AmigaRecordingFrame)
+#else
+#define CAR_BEHAVIOUR_OPTIONAL_AMIGA_FIELDS(X)
+#endif
+
+#define CAR_BEHAVIOUR_STATE_FIELDS(X)               \
+    X(float, g_physicsStepScale)                    \
+    X(long, player_current_piece)                   \
+    X(long, player_current_segment)                 \
+    X(long, players_distance_into_section)          \
+    X(long, players_road_x_position)                \
+    X(long, rear_wheel_surface_x_position)          \
+    X(bool, drop_start_done)                        \
+    X(long, touching_road)                          \
+    X(long, player_y)                               \
+    X(long, player_z_speed)                         \
+    X(long, front_left_damage)                      \
+    X(long, front_right_damage)                     \
+    X(long, rear_damage)                            \
+    X(long, damaged)                                \
+    X(long, new_damage)                             \
+    X(long, nholes)                                 \
+    X(long, car_collision_x_acceleration)           \
+    X(long, car_collision_y_acceleration)           \
+    X(long, car_collision_z_acceleration)           \
+    X(long, boostReserve)                           \
+    X(long, boostUnit)                              \
+    X(long, playerLapNumber)                        \
+    X(long, player_x)                               \
+    X(long, player_z)                               \
+    X(long, player_x_angle)                         \
+    X(long, player_y_angle)                         \
+    X(long, player_z_angle)                         \
+    X(long, player_world_x_speed)                   \
+    X(long, player_world_y_speed)                   \
+    X(long, player_world_z_speed)                   \
+    X(long, player_x_speed)                         \
+    X(long, player_y_speed)                         \
+    X(long, accelerate)                             \
+    X(long, brake)                                  \
+    X(long, accelerating)                           \
+    X(long, engine_power)                           \
+    X(long, boost_unit_value)                       \
+    X(long, left_right_value)                       \
+    X(long, engine_z_acceleration)                  \
+    X(long, boost_activated)                        \
+    X(long, rear_wheel_x_offset)                    \
+    X(long, rear_wheel_z_offset)                    \
+    X(long, front_left_wheel_x_offset)              \
+    X(long, front_left_wheel_z_offset)              \
+    X(long, front_right_wheel_x_offset)             \
+    X(long, front_right_wheel_z_offset)             \
+    X(long, front_left_road_height)                 \
+    X(long, front_right_road_height)                \
+    X(long, rear_road_height)                       \
+    X(long, front_left_actual_height)               \
+    X(long, front_right_actual_height)              \
+    X(long, rear_actual_height)                     \
+    X(long, off_left)                               \
+    X(long, off_right)                              \
+    X(long, wheel_off_road)                         \
+    X(long, distance_off_road)                      \
+    X(long, at_side_byte)                           \
+    X(long, which_side_byte)                        \
+    X(long, smaller_limit_required)                 \
+    X(long, wreck_wheel_height_reduction)           \
+    X(long, on_chains)                              \
+    X(long, player_distance_off_road)               \
+    X(long, off_map_status)                         \
+    X(long, off_track_count)                        \
+    X(long, gravity_x_acceleration)                 \
+    X(long, gravity_y_acceleration)                 \
+    X(long, gravity_z_acceleration)                 \
+    X(long, grounded_delay)                         \
+    X(long, grounded_count)                         \
+    X(long, damage_value)                           \
+    X(long, damaged_count)                          \
+    X(int, g_damageApplicationsThisLogicPeriod)     \
+    X(long, front_left_amount_below_road)           \
+    X(long, front_right_amount_below_road)          \
+    X(long, rear_amount_below_road)                 \
+    X(long, front_left_wheel_speed)                 \
+    X(long, front_right_wheel_speed)                \
+    X(long, leftwheel_angle)                        \
+    X(long, rightwheel_angle)                       \
+    X(long, old_front_left_difference)              \
+    X(long, old_front_right_difference)             \
+    X(long, old_rear_difference)                    \
+    X(long, smashed_countdown)                      \
+    X(long, car_to_road_collision_z_acceleration)   \
+    X(long, player_x_acceleration)                  \
+    X(long, player_y_acceleration)                  \
+    X(long, player_z_acceleration)                  \
+    X(long, total_world_x_acceleration)             \
+    X(long, total_world_y_acceleration)             \
+    X(long, total_world_z_acceleration)             \
+    X(long, player_x_rotation_speed)                \
+    X(long, player_y_rotation_speed)                \
+    X(long, player_z_rotation_speed)                \
+    X(long, player_final_x_rotation_speed)          \
+    X(long, player_final_y_rotation_speed)          \
+    X(long, player_final_z_rotation_speed)          \
+    X(long, player_x_rotation_acceleration)         \
+    X(long, player_y_rotation_acceleration)         \
+    X(long, player_z_rotation_acceleration)         \
+    X(long, Replay)                                 \
+    X(long, ReplayRequested)                        \
+    X(long, ReplayLooping)                          \
+    X(long, ReplayFinished)                         \
+    CAR_BEHAVIOUR_OPTIONAL_AMIGA_FIELDS(X)          \
+    X(long, INITIALISE_PLAYER)                      \
+    X(long, sx1)                                    \
+    X(long, sy1)                                    \
+    X(long, sz1)                                    \
+    X(long, sx2)                                    \
+    X(long, sy2)                                    \
+    X(long, sz2)                                    \
+    X(long, sx3)                                    \
+    X(long, sy3)                                    \
+    X(long, sz3)                                    \
+    X(long, sx4)                                    \
+    X(long, sy4)                                    \
+    X(long, sz4)                                    \
+    X(long, front_left_height_difference)           \
+    X(long, front_right_height_difference)          \
+    X(long, rear_height_difference)                 \
+    X(long, front_difference_below_road)            \
+    X(long, overall_difference_below_road)          \
+    X(long, y_angle_difference)                     \
+    X(long, difference_angle)                       \
+    X(long, pos_difference_angle)                   \
+    X(long, px1)                                    \
+    X(long, pz1)                                    \
+    X(long, px2)                                    \
+    X(long, pz2)                                    \
+    X(long, px3)                                    \
+    X(long, pz3)                                    \
+    X(long, px4)                                    \
+    X(long, pz4)                                    \
+    X(long, g_roadHeightPiece)                      \
+    X(long, g_roadHeightSegment)                    \
+    X(long, g_roadHeightFirstTime)                  \
+    X(long, g_roadHeightPrevTrackID)                \
+    X(long, g_steeringPiece)                        \
+    X(long, engineRevs)                             \
+    X(long, engineRevsChange)                       \
+    X(long, engineFluctuation)                      \
+    X(int, lastEngineSoundIndex)                    \
+    X(int, enginePeriod)                            \
+    X(int, engineSoundIndex)                        \
+    X(long, wheel_left_step_remainder)              \
+    X(long, wheel_right_step_remainder)             \
+    X(long, engine_revs_step_remainder)             \
+    X(int, pendingEngineSoundIndex)                 \
+    X(int, pendingEngineSoundIndexCount)
+
+struct CarBehaviourInstanceState {
+#define CAR_BEHAVIOUR_INSTANCE_FIELD(type, name) type name;
+    CAR_BEHAVIOUR_STATE_FIELDS(CAR_BEHAVIOUR_INSTANCE_FIELD)
+#undef CAR_BEHAVIOUR_INSTANCE_FIELD
+};
+
+static std::vector<CarBehaviourInstanceState> g_carBehaviourInstances;
+static long g_activeCarBehaviourInstance = 0;
+static bool g_carBehaviourInstanceStorageInitialised = false;
+
+static CarBehaviourInstanceState CaptureActiveCarBehaviourState(void) {
+    CarBehaviourInstanceState state{};
+#define CAR_BEHAVIOUR_STATE_CAPTURE(type, name) state.name = name;
+    CAR_BEHAVIOUR_STATE_FIELDS(CAR_BEHAVIOUR_STATE_CAPTURE)
+#undef CAR_BEHAVIOUR_STATE_CAPTURE
+    return state;
+}
+
+static void ApplyCarBehaviourState(const CarBehaviourInstanceState& state) {
+#define CAR_BEHAVIOUR_STATE_APPLY(type, name) name = state.name;
+    CAR_BEHAVIOUR_STATE_FIELDS(CAR_BEHAVIOUR_STATE_APPLY)
+#undef CAR_BEHAVIOUR_STATE_APPLY
+}
+
+static long NormaliseCarBehaviourInstance(long instanceIndex) { return (instanceIndex < 0) ? 0 : instanceIndex; }
+
+static CarBehaviourInstanceState BuildFreshCarBehaviourState(void) {
+    const CarBehaviourInstanceState saved = CaptureActiveCarBehaviourState();
+    ResetPlayer();
+    INITIALISE_PLAYER = TRUE;
+    Replay = FALSE;
+    ReplayRequested = FALSE;
+    ReplayLooping = FALSE;
+    ReplayFinished = FALSE;
+#ifdef USE_AMIGA_RECORDING
+    ReplayAmigaRecording = FALSE;
+    StartOfAmigaRecording = FALSE;
+    AmigaRecordingFrame = 0;
+#endif
+    g_physicsStepScale = 1.0f;
+    g_roadHeightPiece = -1;
+    g_roadHeightSegment = -1;
+    g_roadHeightFirstTime = TRUE;
+    g_roadHeightPrevTrackID = NO_TRACK;
+    g_steeringPiece = 0;
+    g_damageApplicationsThisLogicPeriod = 0;
+    CarBehaviourInstanceState fresh = CaptureActiveCarBehaviourState();
+    ApplyCarBehaviourState(saved);
+    return fresh;
+}
+
+static void EnsureCarBehaviourInstanceStorage(void) {
+    if (g_carBehaviourInstanceStorageInitialised)
+        return;
+    g_carBehaviourInstances.clear();
+    g_carBehaviourInstances.push_back(CaptureActiveCarBehaviourState());
+    g_activeCarBehaviourInstance = 0;
+    g_carBehaviourInstanceStorageInitialised = true;
+}
+
+static void SaveActiveCarBehaviourInstance(void) {
+    EnsureCarBehaviourInstanceStorage();
+    const size_t activeIndex = static_cast<size_t>(g_activeCarBehaviourInstance);
+    if (activeIndex >= g_carBehaviourInstances.size()) {
+        g_carBehaviourInstances.resize(activeIndex + 1, CaptureActiveCarBehaviourState());
+    }
+    g_carBehaviourInstances[activeIndex] = CaptureActiveCarBehaviourState();
+}
+
+static void EnsureCarBehaviourInstanceExists(long instanceIndex) {
+    EnsureCarBehaviourInstanceStorage();
+    const long normalisedIndex = NormaliseCarBehaviourInstance(instanceIndex);
+    while (g_carBehaviourInstances.size() <= static_cast<size_t>(normalisedIndex)) {
+        g_carBehaviourInstances.push_back(BuildFreshCarBehaviourState());
+    }
+}
+
+static void LoadCarBehaviourInstance(long instanceIndex) {
+    const long normalisedIndex = NormaliseCarBehaviourInstance(instanceIndex);
+    EnsureCarBehaviourInstanceExists(normalisedIndex);
+    ApplyCarBehaviourState(g_carBehaviourInstances[static_cast<size_t>(normalisedIndex)]);
+    g_activeCarBehaviourInstance = normalisedIndex;
+}
+
+void CarBehaviourForInstance(long instanceIndex, DWORD input, long* x, long* y, long* z, long* x_angle,
+                             long* y_angle, long* z_angle, float stepSeconds) {
+    const long targetInstance = NormaliseCarBehaviourInstance(instanceIndex);
+    EnsureCarBehaviourInstanceExists(targetInstance);
+
+    const long previousInstance = g_activeCarBehaviourInstance;
+    SaveActiveCarBehaviourInstance();
+    if (previousInstance != targetInstance) {
+        LoadCarBehaviourInstance(targetInstance);
+    }
+
+    CarBehaviourActiveInstance(input, x, y, z, x_angle, y_angle, z_angle, stepSeconds);
+
+    SaveActiveCarBehaviourInstance();
+    if (previousInstance != targetInstance) {
+        LoadCarBehaviourInstance(previousInstance);
+    }
+}
+
+void CarBehaviour(DWORD input, long* x, long* y, long* z, long* x_angle, long* y_angle, long* z_angle,
+                  float stepSeconds) {
+    CarBehaviourForInstance(0, input, x, y, z, x_angle, y_angle, z_angle, stepSeconds);
+}
+
+#undef CAR_BEHAVIOUR_STATE_FIELDS
+#undef CAR_BEHAVIOUR_OPTIONAL_AMIGA_FIELDS
 
 void ResetEngineAudioState(void) {
     engineRevs = 0;
