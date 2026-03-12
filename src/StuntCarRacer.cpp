@@ -700,7 +700,9 @@ static void CalcTrackPreviewViewpoint(void) {
 /*    Description:    */
 /*    ======================================================================================= */
 
-static void CalcGameViewpoint(void) {
+static void CalcGameViewpointForCar(long car_x, long car_y, long car_z, long car_x_angle, long car_y_angle,
+                                    long car_z_angle, long* viewpoint_x, long* viewpoint_y, long* viewpoint_z,
+                                    long* viewpoint_x_angle, long* viewpoint_y_angle, long* viewpoint_z_angle) {
     long x_offset, y_offset, z_offset;
 
     if (bOutsideView) {
@@ -709,34 +711,40 @@ static void CalcGameViewpoint(void) {
         //                to allow a viewpoint with e.g. a different X angle to that of the player.
         //                For the car this would mean the following rotations: Y,X,Z, Y,X,Z, X
         //                For the viewpoint this would mean the following rotations: Y,X,Z, X (possibly!)
-        CalcYXZTrigCoefficients(player1_x_angle, player1_y_angle, player1_z_angle);
+        CalcYXZTrigCoefficients(car_x_angle, car_y_angle, car_z_angle);
 
         // vector from centre of car
         x_offset = 0;
         y_offset = 0xc0;
         z_offset = 0x300;
         WorldOffset(&x_offset, &y_offset, &z_offset);
-        viewpoint1_x = (player1_x - x_offset);
-        viewpoint1_y = (player1_y - y_offset);
-        viewpoint1_z = (player1_z - z_offset);
+        *viewpoint_x = (car_x - x_offset);
+        *viewpoint_y = (car_y - y_offset);
+        *viewpoint_z = (car_z - z_offset);
 
-        viewpoint1_x_angle = player1_x_angle;
+        *viewpoint_x_angle = car_x_angle;
         //viewpoint1_x_angle = (player1_x_angle + (48<<6)) & (MAX_ANGLE-1);
-        viewpoint1_y_angle = player1_y_angle;
+        *viewpoint_y_angle = car_y_angle;
         //viewpoint1_y_angle = (player1_y_angle - (64<<6)) & (MAX_ANGLE-1);
-        viewpoint1_z_angle = player1_z_angle;
+        *viewpoint_z_angle = car_z_angle;
         //viewpoint1_x_angle = 0;
         //viewpoint1_z_angle = 0;
     } else {
-        viewpoint1_x = player1_x;
-        viewpoint1_y = player1_y - (HEIGHT_ABOVE_ROAD << LOG_PRECISION);
+        *viewpoint_x = car_x;
+        *viewpoint_y = car_y - (HEIGHT_ABOVE_ROAD << LOG_PRECISION);
         //        viewpoint1_y = player1_y - (90 << LOG_PRECISION);
-        viewpoint1_z = player1_z;
+        *viewpoint_z = car_z;
 
-        viewpoint1_x_angle = player1_x_angle;
-        viewpoint1_y_angle = player1_y_angle;
-        viewpoint1_z_angle = player1_z_angle;
+        *viewpoint_x_angle = car_x_angle;
+        *viewpoint_y_angle = car_y_angle;
+        *viewpoint_z_angle = car_z_angle;
     }
+}
+
+static void CalcGameViewpoint(void) {
+    CalcGameViewpointForCar(player1_x, player1_y, player1_z, player1_x_angle, player1_y_angle, player1_z_angle,
+                            &viewpoint1_x, &viewpoint1_y, &viewpoint1_z, &viewpoint1_x_angle, &viewpoint1_y_angle,
+                            &viewpoint1_z_angle);
 }
 
 //--------------------------------------------------------------------------------------
@@ -1460,7 +1468,7 @@ static void SetPerspectiveDepthRange(RenderDevice* pDevice, FLOAT nearPlane, FLO
     pDevice->SetTransform(TS_PROJECTION, &matProj);
 }
 
-static void RenderWorldGeometry(RenderDevice* pDevice) {
+static void RenderWorldGeometry(RenderDevice* pDevice, bool drawPlayer1Car, bool drawPlayer2Car) {
     // Draw Track
     pDevice->SetTransform(TS_WORLD, &matWorldTrack);
     DrawGroundPlane(pDevice);
@@ -1472,24 +1480,81 @@ static void RenderWorldGeometry(RenderDevice* pDevice) {
         break;
 
     case TRACK_PREVIEW:
-        // Draw Opponent's Car
-        pDevice->SetTransform(TS_WORLD, &matWorldOpponentsCar);
-        DrawCar(pDevice);
+        if (drawPlayer2Car) {
+            // Draw player 2 / opponent car
+            pDevice->SetTransform(TS_WORLD, &matWorldOpponentsCar);
+            DrawCar(pDevice);
+        }
         break;
 
     case GAME_IN_PROGRESS:
     case GAME_OVER:
-        // Draw Opponent's Car
-        pDevice->SetTransform(TS_WORLD, &matWorldOpponentsCar);
-        DrawCar(pDevice);
-
-        if (bOutsideView) {
-            // Draw Player1's Car
+        if (drawPlayer2Car) {
+            pDevice->SetTransform(TS_WORLD, &matWorldOpponentsCar);
+            DrawCar(pDevice);
+        }
+        if (drawPlayer1Car) {
             pDevice->SetTransform(TS_WORLD, &matWorldCar);
             DrawCar(pDevice);
         }
         break;
     }
+}
+
+static void SetGameplayViewTransform(RenderDevice* pDevice, long viewpoint_x, long viewpoint_y, long viewpoint_z,
+                                     long viewpoint_x_angle, long viewpoint_y_angle, long viewpoint_z_angle) {
+    glm::mat4 matRot, matTemp, matTrans, matView;
+
+    const long viewX = viewpoint_x >> LOG_PRECISION;
+    const long viewZ = viewpoint_z >> LOG_PRECISION;
+    mat4Translation(&matTrans, static_cast<float>(-viewX), static_cast<float>(viewpoint_y >> LOG_PRECISION),
+                    static_cast<float>(-viewZ));
+    mat4Identity(&matRot);
+    float xa = ((static_cast<float>(-viewpoint_x_angle) * 2 * PI) / 65536.0f);
+    float ya = ((static_cast<float>(-viewpoint_y_angle) * 2 * PI) / 65536.0f);
+    float za = ((static_cast<float>(-viewpoint_z_angle) * 2 * PI) / 65536.0f);
+#ifdef linux
+    mat4RotationY(&matTemp, ya + PI);
+    mat4Multiply(&matRot, &matRot, &matTemp);
+    mat4RotationX(&matTemp, -xa);
+    mat4Multiply(&matRot, &matRot, &matTemp);
+    mat4RotationZ(&matTemp, -za);
+    mat4Multiply(&matRot, &matRot, &matTemp);
+#else
+    mat4RotationY(&matTemp, ya);
+    mat4Multiply(&matRot, &matRot, &matTemp);
+    mat4RotationX(&matTemp, xa);
+    mat4Multiply(&matRot, &matRot, &matTemp);
+    mat4RotationZ(&matTemp, za);
+    mat4Multiply(&matRot, &matRot, &matTemp);
+#endif
+    mat4Multiply(&matView, &matTrans, &matRot);
+#ifdef linux
+    mat4Scaling(&matTrans, +1, -1, +1);
+    mat4Multiply(&matView, &matView, &matTrans);
+#endif
+    pDevice->SetTransform(TS_VIEW, &matView);
+}
+
+static void RenderGameplayViewport(RenderDevice* pDevice, int viewportX, int viewportY, int viewportW, int viewportH,
+                                   long viewpoint_x, long viewpoint_y, long viewpoint_z, long viewpoint_x_angle,
+                                   long viewpoint_y_angle, long viewpoint_z_angle, bool drawPlayer1Car,
+                                   bool drawPlayer2Car, bool drawCockpitOverlay) {
+    glViewport(viewportX, viewportY, viewportW, viewportH);
+    V(pDevice->Clear(0, NULL, CLEAR_ZBUFFER, 0, 1.0f, 0));
+
+    SetGameplayViewTransform(pDevice, viewpoint_x, viewpoint_y, viewpoint_z, viewpoint_x_angle, viewpoint_y_angle,
+                             viewpoint_z_angle);
+    SetPerspectiveDepthRange(pDevice, PERSPECTIVE_FAR_PASS_NEAR, PERSPECTIVE_FAR);
+    DrawBackdropSkyDome3D(pDevice);
+    RenderWorldGeometry(pDevice, drawPlayer1Car, drawPlayer2Car);
+
+    V(pDevice->Clear(0, NULL, CLEAR_ZBUFFER, 0, 1.0f, 0));
+    SetPerspectiveDepthRange(pDevice, PERSPECTIVE_NEAR, PERSPECTIVE_NEAR_PASS_FAR);
+    RenderWorldGeometry(pDevice, drawPlayer1Car, drawPlayer2Car);
+
+    if (drawCockpitOverlay)
+        DrawCockpit(pDevice);
 }
 
 void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedTime, void* pUserContext) {
@@ -1503,6 +1568,63 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
 
     // Render the scene
     if (SUCCEEDED(pDevice->BeginScene())) {
+        if (bMultiplayerMode && (GameMode == GAME_IN_PROGRESS || GameMode == GAME_OVER)) {
+            GLint fullVp[4];
+            glGetIntegerv(GL_VIEWPORT, fullVp);
+            const int lowerHeight = fullVp[3] / 2;
+            const int upperHeight = fullVp[3] - lowerHeight;
+
+            float alpha = (g_physicsStepSeconds > 0.0) ? static_cast<float>(g_logicAccumulator / g_physicsStepSeconds) : 0.0f;
+            if (alpha < 0.0f)
+                alpha = 0.0f;
+            if (alpha > 1.0f)
+                alpha = 1.0f;
+
+            const long p1x = static_cast<long>(LerpLong(prev_player1_x, player1_x, alpha));
+            const long p1y = static_cast<long>(LerpLong(prev_player1_y, player1_y, alpha));
+            const long p1z = static_cast<long>(LerpLong(prev_player1_z, player1_z, alpha));
+            const long p1xa = (static_cast<long>(LerpWrappedAngleUnits(prev_player1_x_angle, player1_x_angle, alpha)) &
+                               (MAX_ANGLE - 1));
+            const long p1ya = (static_cast<long>(LerpWrappedAngleUnits(prev_player1_y_angle, player1_y_angle, alpha)) &
+                               (MAX_ANGLE - 1));
+            const long p1za = (static_cast<long>(LerpWrappedAngleUnits(prev_player1_z_angle, player1_z_angle, alpha)) &
+                               (MAX_ANGLE - 1));
+
+            const long p2x = static_cast<long>(LerpLong(prev_opponent_x, opponent_x, alpha));
+            const long p2y = static_cast<long>(LerpLong(prev_opponent_y, opponent_y, alpha));
+            const long p2z = static_cast<long>(LerpLong(prev_opponent_z, opponent_z, alpha));
+            const long p2xa = RadiansToPlayerAngle(LerpWrappedRadians(prev_opponent_x_angle, opponent_x_angle, alpha));
+            const long p2ya = RadiansToPlayerAngle(LerpWrappedRadians(prev_opponent_y_angle, opponent_y_angle, alpha));
+            const long p2za = RadiansToPlayerAngle(LerpWrappedRadians(prev_opponent_z_angle, opponent_z_angle, alpha));
+
+            long topViewX, topViewY, topViewZ, topViewXa, topViewYa, topViewZa;
+            CalcGameViewpointForCar(p1x, p1y, p1z, p1xa, p1ya, p1za, &topViewX, &topViewY, &topViewZ, &topViewXa,
+                                    &topViewYa, &topViewZa);
+
+            long bottomViewX, bottomViewY, bottomViewZ, bottomViewXa, bottomViewYa, bottomViewZa;
+            CalcGameViewpointForCar(p2x, p2y, p2z, p2xa, p2ya, p2za, &bottomViewX, &bottomViewY, &bottomViewZ,
+                                    &bottomViewXa, &bottomViewYa, &bottomViewZa);
+
+            // Draw backdrop once for the full frame; per-viewport passes only render 3D + overlays.
+            pDevice->SetRenderState(RS_ZENABLE, FALSE);
+            pDevice->SetRenderState(RS_CULLMODE, CULL_NONE);
+            DrawBackdrop(render_backdrop_viewpoint_y, render_backdrop_viewpoint_x_angle, render_backdrop_viewpoint_y_angle,
+                         render_backdrop_viewpoint_z_angle);
+
+            // Player 1 (top): always draw player 2; draw player 1 only when outside view.
+            RenderGameplayViewport(pDevice, fullVp[0], fullVp[1] + lowerHeight, fullVp[2], upperHeight, topViewX,
+                                   topViewY, topViewZ, topViewXa, topViewYa, topViewZa, bOutsideView, true,
+                                   !bOutsideView);
+
+            // Player 2 (bottom): always draw player 1; draw player 2 only when outside view.
+            RenderGameplayViewport(pDevice, fullVp[0], fullVp[1], fullVp[2], lowerHeight, bottomViewX, bottomViewY,
+                                   bottomViewZ, bottomViewXa, bottomViewYa, bottomViewZa, true,
+                                   bOutsideView, !bOutsideView);
+
+            // Restore full viewport for text rendering and subsequent frames.
+            glViewport(fullVp[0], fullVp[1], fullVp[2], fullVp[3]);
+            SetPerspectiveDepthRange(pDevice, PERSPECTIVE_NEAR, PERSPECTIVE_FAR);
+        } else {
         // Disable Z buffer and polygon culling, ready for DrawBackdrop()
         pDevice->SetRenderState(RS_ZENABLE, FALSE);
         pDevice->SetRenderState(RS_CULLMODE, CULL_NONE);
@@ -1514,22 +1636,24 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
         // Render world geometry with split depth ranges for improved precision.
         SetPerspectiveDepthRange(pDevice, PERSPECTIVE_FAR_PASS_NEAR, PERSPECTIVE_FAR);
         DrawBackdropSkyDome3D(pDevice);
-        RenderWorldGeometry(pDevice);
+        RenderWorldGeometry(pDevice, bOutsideView, true);
 
         // Clear depth and redraw near range so close geometry wins cleanly.
         V(pDevice->Clear(0, NULL, CLEAR_ZBUFFER, 0, 1.0f, 0));
         SetPerspectiveDepthRange(pDevice, PERSPECTIVE_NEAR, PERSPECTIVE_NEAR_PASS_FAR);
-        RenderWorldGeometry(pDevice);
+        RenderWorldGeometry(pDevice, bOutsideView, true);
+        }
 
         if ((GameMode == GAME_IN_PROGRESS) || (GameMode == GAME_OVER)) {
-            if (!bOutsideView) {
+            if (!bMultiplayerMode && !bOutsideView) {
                 // draw cockpit...
                 DrawCockpit(pDevice);
             }
         }
 
         if (GameMode == GAME_IN_PROGRESS) {
-            DrawOtherGraphics();
+            if (!bMultiplayerMode)
+                DrawOtherGraphics();
 
             //jsr    display.speed.bar
             if (bFrameMoved)
