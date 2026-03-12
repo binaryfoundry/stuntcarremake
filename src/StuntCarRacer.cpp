@@ -1308,6 +1308,69 @@ static void HandleTrackPreview(TextHelper& txtHelper) {
 extern long new_damage;
 extern long opponentsID;
 extern WCHAR* opponentNames[];
+extern long NumTrackPieces;
+extern TRACK_PIECE Track[];
+extern long player_current_piece;
+extern long players_distance_into_section;
+
+static long CalculateTwoPlayerDistanceForHudFromPlayer1(void) {
+    if (TrackID == NO_TRACK || NumTrackPieces <= 0)
+        return 0;
+
+    static long distancesAroundRoad[MAX_PIECES_PER_TRACK] = {0};
+    static long totalRoadDistance = 0;
+    static long previousTrackID = NO_TRACK;
+
+    if (previousTrackID != TrackID) {
+        long distance = 0;
+        for (long piece = 0; piece < NumTrackPieces; ++piece) {
+            distancesAroundRoad[piece] = distance << 5;
+            distance += Track[piece].numSegments;
+        }
+        totalRoadDistance = distance << 5;
+        previousTrackID = TrackID;
+    }
+
+    long p1Piece = 0, p1DistanceIntoSection = 0;
+    long p2Piece = 0, p2DistanceIntoSection = 0;
+
+    {
+        const long previousInstance = PushCarBehaviourInstance(0);
+        p1Piece = player_current_piece;
+        p1DistanceIntoSection = players_distance_into_section;
+        PopCarBehaviourInstance(previousInstance);
+    }
+    {
+        const long previousInstance = PushCarBehaviourInstance(1);
+        p2Piece = player_current_piece;
+        p2DistanceIntoSection = players_distance_into_section;
+        PopCarBehaviourInstance(previousInstance);
+    }
+
+    if (p1Piece < 0 || p1Piece >= NumTrackPieces || p2Piece < 0 || p2Piece >= NumTrackPieces || totalRoadDistance <= 0)
+        return 0;
+
+    long diff = ((p2DistanceIntoSection - p1DistanceIntoSection) >> 3);
+    diff += distancesAroundRoad[p2Piece] - distancesAroundRoad[p1Piece];
+
+    long absDiff = abs(diff);
+    long opposite = totalRoadDistance - absDiff;
+    long smallestDistanceBetweenPlayers = opposite;
+    if (absDiff < opposite) {
+        smallestDistanceBetweenPlayers = absDiff;
+        diff = -diff;
+    }
+
+    const bool opponentBehindPlayer = (diff > 0);
+    long dist = smallestDistanceBetweenPlayers;
+    dist += (dist >> 2);
+    dist >>= 2;
+
+    if (opponentBehindPlayer)
+        dist = -dist;
+
+    return dist;
+}
 
 static void DrawGameplayCockpitHud(TextHelper& txtHelper, long lapValue, long opponentsDistance) {
     WCHAR lapText[3] = L"  ";
@@ -1606,7 +1669,7 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
             glGetIntegerv(GL_VIEWPORT, fullVp);
             const int lowerHeight = fullVp[3] / 2;
             const int upperHeight = fullVp[3] - lowerHeight;
-            const long opponentsDistanceFromPlayer1 = CalculateOpponentsDistance();
+            const long opponentsDistanceFromPlayer1 = CalculateTwoPlayerDistanceForHudFromPlayer1();
             float textScale = GetTextScale();
             static TextHelper splitHudTextHelper(g_pFont, g_pSprite, 15);
             splitHudTextHelper.SetDisplaySize(static_cast<int>(15 * textScale));
