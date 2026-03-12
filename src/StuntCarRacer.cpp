@@ -200,6 +200,8 @@ static long prev_player1_x = 0, prev_player1_y = 0, prev_player1_z = 0;
 static long prev_player1_x_angle = 0, prev_player1_y_angle = 0, prev_player1_z_angle = 0;
 static long prev_opponent_x = 0, prev_opponent_y = 0, prev_opponent_z = 0;
 static float prev_opponent_x_angle = 0.0f, prev_opponent_y_angle = 0.0f, prev_opponent_z_angle = 0.0f;
+static long prev_player1_render_x = 0, prev_player1_render_y = 0, prev_player1_render_z = 0;
+static long prev_opponent_render_x = 0, prev_opponent_render_y = 0, prev_opponent_render_z = 0;
 static long prev_viewpoint1_x = 0, prev_viewpoint1_y = 0, prev_viewpoint1_z = 0;
 static long prev_viewpoint1_x_angle = 0, prev_viewpoint1_y_angle = 0, prev_viewpoint1_z_angle = 0;
 static long prev_target_x = 0, prev_target_y = 0, prev_target_z = 0;
@@ -865,6 +867,17 @@ static void CapturePreviousCarState(void) {
     prev_opponent_x_angle = opponent_x_angle;
     prev_opponent_y_angle = opponent_y_angle;
     prev_opponent_z_angle = opponent_z_angle;
+    prev_player1_render_x = player1_x;
+    prev_player1_render_y = player1_y;
+    prev_player1_render_z = player1_z;
+    ProjectCarRenderPositionToRoadNormalForInstance(0, &prev_player1_render_x, &prev_player1_render_y,
+                                                     &prev_player1_render_z);
+    prev_opponent_render_x = opponent_x;
+    prev_opponent_render_y = opponent_y;
+    prev_opponent_render_z = opponent_z;
+    if (bMultiplayerMode)
+        ProjectCarRenderPositionToRoadNormalForInstance(1, &prev_opponent_render_x, &prev_opponent_render_y,
+                                                         &prev_opponent_render_z);
     prev_viewpoint1_x = viewpoint1_x;
     prev_viewpoint1_y = viewpoint1_y;
     prev_viewpoint1_z = viewpoint1_z;
@@ -898,13 +911,11 @@ static void UpdateInterpolatedCarTransforms(RenderDevice* pDevice, float alpha) 
     render_backdrop_viewpoint_y_angle = static_cast<long>(backdropYa) & (MAX_ANGLE - 1);
     render_backdrop_viewpoint_z_angle = static_cast<long>(backdropZa) & (MAX_ANGLE - 1);
 
-    long playerRenderX = static_cast<long>(LerpLong(prev_player1_x, player1_x, alpha));
-    long playerRenderY = static_cast<long>(LerpLong(prev_player1_y, player1_y, alpha));
-    long playerRenderZ = static_cast<long>(LerpLong(prev_player1_z, player1_z, alpha));
+    long playerRenderX = player1_x, playerRenderY = player1_y, playerRenderZ = player1_z;
     ProjectCarRenderPositionToRoadNormalForInstance(0, &playerRenderX, &playerRenderY, &playerRenderZ);
-    const float playerX = FixedPointToWorldCoord(playerRenderX);
-    const float playerY = FixedPointToWorldCoord(playerRenderY);
-    const float playerZ = FixedPointToWorldCoord(playerRenderZ);
+    const float playerX = LerpFixedCoord(prev_player1_render_x, playerRenderX, alpha);
+    const float playerY = LerpFixedCoord(prev_player1_render_y, playerRenderY, alpha);
+    const float playerZ = LerpFixedCoord(prev_player1_render_z, playerRenderZ, alpha);
     const float playerXa = LerpWrappedPlayerAngle(prev_player1_x_angle, player1_x_angle, alpha);
     const float playerYa = LerpWrappedPlayerAngle(prev_player1_y_angle, player1_y_angle, alpha);
     const float playerZa = LerpWrappedPlayerAngle(prev_player1_z_angle, player1_z_angle, alpha);
@@ -912,14 +923,12 @@ static void UpdateInterpolatedCarTransforms(RenderDevice* pDevice, float alpha) 
     BuildCarWorldTransform(&matWorldCar, playerX, playerY, playerZ, playerXa, playerYa, playerZa,
                            playerCarYOffset);
 
-    long opponentRenderX = static_cast<long>(LerpLong(prev_opponent_x, opponent_x, alpha));
-    long opponentRenderY = static_cast<long>(LerpLong(prev_opponent_y, opponent_y, alpha));
-    long opponentRenderZ = static_cast<long>(LerpLong(prev_opponent_z, opponent_z, alpha));
+    long opponentRenderX = opponent_x, opponentRenderY = opponent_y, opponentRenderZ = opponent_z;
     if (bMultiplayerMode)
         ProjectCarRenderPositionToRoadNormalForInstance(1, &opponentRenderX, &opponentRenderY, &opponentRenderZ);
-    const float opponentX = FixedPointToWorldCoord(opponentRenderX);
-    const float opponentY = FixedPointToWorldCoord(opponentRenderY);
-    const float opponentZ = FixedPointToWorldCoord(opponentRenderZ);
+    const float opponentX = LerpFixedCoord(prev_opponent_render_x, opponentRenderX, alpha);
+    const float opponentY = LerpFixedCoord(prev_opponent_render_y, opponentRenderY, alpha);
+    const float opponentZ = LerpFixedCoord(prev_opponent_render_z, opponentRenderZ, alpha);
     const float opponentXa = LerpWrappedRadians(prev_opponent_x_angle, opponent_x_angle, alpha);
     const float opponentYa = LerpWrappedRadians(prev_opponent_y_angle, opponent_y_angle, alpha);
     const float opponentZa = LerpWrappedRadians(prev_opponent_z_angle, opponent_z_angle, alpha);
