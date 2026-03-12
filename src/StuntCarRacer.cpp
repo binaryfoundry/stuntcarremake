@@ -137,11 +137,16 @@ bool bPaused = FALSE;
 bool bPlayerPaused = FALSE;
 bool bOpponentPaused = FALSE;
 bool bMultiplayerMode = FALSE;
+bool bFauxMultiplayerMode = FALSE;
 long bTrackDrawMode = 0;
 bool bOutsideView = FALSE;
 long engineSoundPlaying = FALSE;
 double gameStartTime, gameEndTime;
 bool bSuperLeague = FALSE;
+
+static bool IsSplitScreenMode(void) {
+    return bMultiplayerMode || bFauxMultiplayerMode;
+}
 
 #if defined(DEBUG) || defined(_DEBUG)
 FILE* out;
@@ -1247,6 +1252,8 @@ static void HandleTrackPreview(TextHelper& txtHelper) {
     txtHelper.DrawTextLine(L"'M', Select or Escape = back to track menu");
     txtHelper.DrawTextLine(L"(Press F4 to change scenery)");
     txtHelper.DrawTextLine(bMultiplayerMode ? L"(Press F9: Multiplayer mode ON)" : L"(Press F9: Multiplayer mode OFF)");
+    txtHelper.DrawTextLine(bFauxMultiplayerMode ? L"(Press F8: Faux multiplayer ON - AI Player 2)"
+                                                 : L"(Press F8: Faux multiplayer OFF)");
 
     txtHelper.SetInsertionPos(static_cast<int>((2 + (wideScreen ? 10 : 0)) * textScale),
                               static_cast<int>(pd3dsdBackBuffer->Height - 15 * 6 * textScale));
@@ -1261,6 +1268,8 @@ static void HandleTrackPreview(TextHelper& txtHelper) {
     txtHelper.DrawTextLine(L"  Left stick/D-Pad = Steer, RT = Accelerate, LT or B = Brake, A/X/RB = Boost");
     if (bMultiplayerMode)
         txtHelper.DrawTextLine(L"Multiplayer controls: Gamepad = Player 1, Keyboard = Player 2");
+    if (bFauxMultiplayerMode)
+        txtHelper.DrawTextLine(L"Faux multiplayer: normal controls for Player 1, AI drives Player 2");
     txtHelper.DrawTextLine(L"  R = Point car in opposite direction, P = Pause, O = Unpause");
     txtHelper.DrawTextLine(L"  M, Select or Escape = Back to track menu");
 
@@ -1486,7 +1495,7 @@ void RenderText(double fTime) {
                 txtHelper.DrawFormattedTextLine(ss.str());
             }
         }
-        if (!bMultiplayerMode)
+        if (!IsSplitScreenMode())
             DrawGameplayCockpitHudForInstance(txtHelper, 0, lapNumber[PLAYER], CalculateOpponentsDistance());
 
         txtHelper.End();
@@ -1664,12 +1673,13 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
 
     // Render the scene
     if (SUCCEEDED(pDevice->BeginScene())) {
-        if (bMultiplayerMode && (GameMode == GAME_IN_PROGRESS || GameMode == GAME_OVER)) {
+        if (IsSplitScreenMode() && (GameMode == GAME_IN_PROGRESS || GameMode == GAME_OVER)) {
             GLint fullVp[4];
             glGetIntegerv(GL_VIEWPORT, fullVp);
             const int lowerHeight = fullVp[3] / 2;
             const int upperHeight = fullVp[3] - lowerHeight;
-            const long opponentsDistanceFromPlayer1 = CalculateTwoPlayerDistanceForHudFromPlayer1();
+            const long opponentsDistanceFromPlayer1 =
+                bMultiplayerMode ? CalculateTwoPlayerDistanceForHudFromPlayer1() : CalculateOpponentsDistance();
             float textScale = GetTextScale();
             static TextHelper splitHudTextHelper(g_pFont, g_pSprite, 15);
             splitHudTextHelper.SetDisplaySize(static_cast<int>(15 * textScale));
@@ -1705,6 +1715,12 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
             long bottomViewX, bottomViewY, bottomViewZ, bottomViewXa, bottomViewYa, bottomViewZa;
             CalcGameViewpointForCar(p2x, p2y, p2z, p2xa, p2ya, p2za, &bottomViewX, &bottomViewY, &bottomViewZ,
                                     &bottomViewXa, &bottomViewYa, &bottomViewZa);
+            if (!bOutsideView) {
+                // Keep cockpit cameras locked to the latest clamped car heights so they don't dip through the road
+                // when interpolated car Y values pass under steep track sections.
+                topViewY = player1_y - (HEIGHT_ABOVE_ROAD << LOG_PRECISION);
+                bottomViewY = opponent_y - (HEIGHT_ABOVE_ROAD << LOG_PRECISION);
+            }
 
             // Draw backdrop once for the full frame; per-viewport passes only render 3D + overlays.
             pDevice->SetRenderState(RS_ZENABLE, FALSE);
@@ -1749,14 +1765,14 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
         }
 
         if ((GameMode == GAME_IN_PROGRESS) || (GameMode == GAME_OVER)) {
-            if (!bMultiplayerMode && !bOutsideView) {
+            if (!IsSplitScreenMode() && !bOutsideView) {
                 // draw cockpit...
                 DrawCockpit(pDevice);
             }
         }
 
         if (GameMode == GAME_IN_PROGRESS) {
-            if (!bMultiplayerMode)
+            if (!IsSplitScreenMode())
                 DrawOtherGraphics();
 
             //jsr    display.speed.bar
@@ -1998,8 +2014,16 @@ bool process_events() {
 
             case SDLK_F9:
                 bMultiplayerMode = !bMultiplayerMode;
-                if (bMultiplayerMode)
+                if (bMultiplayerMode) {
+                    bFauxMultiplayerMode = FALSE;
                     opponentsID = NO_OPPONENT;
+                }
+                break;
+
+            case SDLK_F8:
+                bFauxMultiplayerMode = !bFauxMultiplayerMode;
+                if (bFauxMultiplayerMode)
+                    bMultiplayerMode = FALSE;
                 break;
 
 #if defined(DEBUG) || defined(_DEBUG)
