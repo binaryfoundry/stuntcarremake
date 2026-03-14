@@ -1839,16 +1839,13 @@ void RenderText(double fTime) {
 
                 if (GameMode == GAME_OVER) {
 #ifdef linux
-                    txtHelperLarge.SetInsertionPos(static_cast<int>((250 + (wideScreen ? 80 : 0)) * textScale),
-                                                   static_cast<int>(pd3dsdBackBuffer->Height - 25 * 13 * textScale));
-                    txtHelperLarge.DrawTextLine(L"GAME OVER");
-                    txtHelperLarge.SetInsertionPos(static_cast<int>((132 + (wideScreen ? 80 : 0)) * textScale),
-                                                   static_cast<int>(pd3dsdBackBuffer->Height - 25 * 11 * textScale));
-                    txtHelperLarge.DrawTextLine(L"Press 'M' or A for track menu");
+                    DrawCenteredTextLine(txtHelperLarge, L"GAME OVER",
+                                         static_cast<int>(pd3dsdBackBuffer->Height - 25 * 13 * textScale));
+                    DrawCenteredTextLine(txtHelperLarge, L"Press 'M' or A for track menu",
+                                         static_cast<int>(pd3dsdBackBuffer->Height - 25 * 11 * textScale));
 #else
-                    txtHelperLarge.SetInsertionPos(static_cast<int>((124 + (wideScreen ? 80 : 0)) * textScale),
-                                                   static_cast<int>(pd3dsdBackBuffer->Height - 25 * 12 * textScale));
-                    txtHelperLarge.DrawTextLine(L"GAME OVER: Press 'M' or A for track menu");
+                    DrawCenteredTextLine(txtHelperLarge, L"GAME OVER: Press 'M' or A for track menu",
+                                         static_cast<int>(pd3dsdBackBuffer->Height - 25 * 12 * textScale));
 #endif
                 } else {
                     long intTime = static_cast<long>(diffTime);
