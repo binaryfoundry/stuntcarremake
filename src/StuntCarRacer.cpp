@@ -866,6 +866,23 @@ static void UpdateProjectedRenderPositions(void) {
         ProjectCarRenderPositionToRoadNormalForInstance(1, &opponent_render_x, &opponent_render_y, &opponent_render_z);
 }
 
+static void PrimeMultiplayerPlayer2StartFromSinglePlayerOpponent(void) {
+    if (!bMultiplayerMode || TrackID == NO_TRACK)
+        return;
+
+    const bool savedNewGame = bNewGame;
+    bNewGame = TRUE;
+
+    float spawnXa = 0.0f, spawnYa = 0.0f, spawnZa = 0.0f;
+    OpponentBehaviour(&opponent_x, &opponent_y, &opponent_z, &spawnXa, &spawnYa, &spawnZa, true,
+                      static_cast<float>(g_physicsStepSeconds));
+    opponent_x_angle = spawnXa;
+    opponent_y_angle = spawnYa;
+    opponent_z_angle = spawnZa;
+
+    bNewGame = savedNewGame;
+}
+
 static void CapturePreviousCarState(void) {
     prev_player1_x = player1_x;
     prev_player1_y = player1_y;
@@ -1316,6 +1333,7 @@ static void HandleTrackPreview(TextHelper& txtHelper) {
 
     if (keyPress == STARTMENU) {
         RestartEngineAudioBuffers(true);
+        PrimeMultiplayerPlayer2StartFromSinglePlayerOpponent();
         bNewGame = TRUE;
         GameMode = GAME_IN_PROGRESS;
         g_restartEngineAudioOnFirstInput = true;

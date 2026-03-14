@@ -446,6 +446,7 @@ extern long NumTrackPieces;
 extern long PlayersStartPiece;
 extern long StartLinePiece;
 extern long HalfALapPiece;
+extern bool bMultiplayerMode;
 
 long INITIALISE_PLAYER = TRUE;
 
@@ -481,7 +482,18 @@ static void CarBehaviourActiveInstance(DWORD input, long* x, long* y, long* z, l
         if (off_track_count > OFF_TRACK_LIMIT) {
             PositionCarAbovePiece(player_current_piece);
         } else {
-            PositionCarAbovePiece(PlayersStartPiece);
+            if (bNewGame && bMultiplayerMode && (GetActiveCarBehaviourInstance() == 1)) {
+                // In 2-player mode, let player 2 start from the same spawn transform as
+                // the single-player opponent.
+                player_x = *x;
+                player_y = -(*y / LOCAL_Y_FACTOR);
+                player_z = *z;
+                player_x_angle = (*x_angle);
+                player_y_angle = (*y_angle);
+                player_z_angle = (*z_angle);
+            } else {
+                PositionCarAbovePiece(PlayersStartPiece);
+            }
         }
         drop_start_done = FALSE;
         RequestRestartEngineAudioOnFirstInput(); /* engine audio restarts on next keyboard/gamepad input */
