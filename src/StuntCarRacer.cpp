@@ -1577,6 +1577,22 @@ static void DrawGameplayCockpitHudForInstance(TextHelper& txtHelper, long carBeh
     PopCarBehaviourInstance(previousInstance);
 }
 
+static int GetCurrentTextProjectionWidth(void) {
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    if (vp[3] <= 0)
+        return (vp[2] > 0) ? vp[2] : BASE_WIDTH_STANDARD;
+    return static_cast<int>((480.0f * static_cast<float>(vp[2]) / static_cast<float>(vp[3])) + 0.5f);
+}
+
+static void DrawCenteredTextLine(TextHelper& txtHelper, const std::wstring& line, int y) {
+    int centeredX = (GetCurrentTextProjectionWidth() - txtHelper.MeasureTextWidth(line.c_str())) / 2;
+    if (centeredX < 0)
+        centeredX = 0;
+    txtHelper.SetInsertionPos(centeredX, y);
+    txtHelper.DrawFormattedTextLine(line);
+}
+
 void RenderText(double fTime) {
     // The helper object simply helps keep track of text position, and color
     // and then it calls pFont->DrawText( m_pSprite, strMsg, -1, &rc, DT_NOCLIP, m_clr );
@@ -1668,13 +1684,6 @@ void RenderText(double fTime) {
         txtHelper.End();
 
         if (raceFinished) {
-#ifdef linux
-            static
-#endif
-                TextHelper txtHelperLarge(g_pFontLarge, g_pSprite, static_cast<int>(25 * textScale));
-
-            txtHelperLarge.Begin();
-
             double currentTime = GetTimeSeconds(), diffTime;
             if (gameEndTime == 0.0)
                 gameEndTime = currentTime;
@@ -1685,37 +1694,43 @@ void RenderText(double fTime) {
                 GameMode = GAME_OVER;
             }
 
-            if (GameMode == GAME_OVER) {
+            if (!IsSplitScreenMode()) {
 #ifdef linux
-                txtHelperLarge.SetInsertionPos(static_cast<int>((250 + (wideScreen ? 80 : 0)) * textScale),
-                                               static_cast<int>(pd3dsdBackBuffer->Height - 25 * 13 * textScale));
-                txtHelperLarge.DrawTextLine(L"GAME OVER");
-                txtHelperLarge.SetInsertionPos(static_cast<int>((132 + (wideScreen ? 80 : 0)) * textScale),
-                                               static_cast<int>(pd3dsdBackBuffer->Height - 25 * 11 * textScale));
-                txtHelperLarge.DrawTextLine(L"Press 'M' or A for track menu");
-#else
-                txtHelperLarge.SetInsertionPos(static_cast<int>((124 + (wideScreen ? 80 : 0)) * textScale),
-                                               static_cast<int>(pd3dsdBackBuffer->Height - 25 * 12 * textScale));
-                txtHelperLarge.DrawTextLine(L"GAME OVER: Press 'M' or A for track menu");
+                static
 #endif
-            } else {
-                long intTime = static_cast<long>(diffTime);
-                // Text flashes white/black, changing every half second
-                if ((diffTime - (double)intTime) < 0.5)
-                    txtHelperLarge.SetForegroundColor(glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
-                else
-                    txtHelperLarge.SetForegroundColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+                    TextHelper txtHelperLarge(g_pFontLarge, g_pSprite, static_cast<int>(25 * textScale));
 
-                txtHelperLarge.SetInsertionPos(static_cast<int>((250 + (wideScreen ? 80 : 0)) * textScale),
-                                               static_cast<int>(pd3dsdBackBuffer->Height - 25 * 12 * textScale));
+                txtHelperLarge.Begin();
 
-                if (raceWon)
-                    txtHelperLarge.DrawTextLine(L"RACE WON");
-                else
-                    txtHelperLarge.DrawTextLine(L"RACE LOST");
+                if (GameMode == GAME_OVER) {
+#ifdef linux
+                    txtHelperLarge.SetInsertionPos(static_cast<int>((250 + (wideScreen ? 80 : 0)) * textScale),
+                                                   static_cast<int>(pd3dsdBackBuffer->Height - 25 * 13 * textScale));
+                    txtHelperLarge.DrawTextLine(L"GAME OVER");
+                    txtHelperLarge.SetInsertionPos(static_cast<int>((132 + (wideScreen ? 80 : 0)) * textScale),
+                                                   static_cast<int>(pd3dsdBackBuffer->Height - 25 * 11 * textScale));
+                    txtHelperLarge.DrawTextLine(L"Press 'M' or A for track menu");
+#else
+                    txtHelperLarge.SetInsertionPos(static_cast<int>((124 + (wideScreen ? 80 : 0)) * textScale),
+                                                   static_cast<int>(pd3dsdBackBuffer->Height - 25 * 12 * textScale));
+                    txtHelperLarge.DrawTextLine(L"GAME OVER: Press 'M' or A for track menu");
+#endif
+                } else {
+                    long intTime = static_cast<long>(diffTime);
+                    // Text flashes white/black, changing every half second
+                    if ((diffTime - (double)intTime) < 0.5)
+                        txtHelperLarge.SetForegroundColor(glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+                    else
+                        txtHelperLarge.SetForegroundColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+
+                    const std::wstring resultLabel = raceWon ? L"RACE WON" : L"RACE LOST";
+                    const int resultDisplaySize = static_cast<int>(25 * textScale);
+                    const int centeredY = (BASE_HEIGHT - resultDisplaySize) / 2;
+                    DrawCenteredTextLine(txtHelperLarge, resultLabel, centeredY);
+                }
+
+                txtHelperLarge.End();
             }
-
-            txtHelperLarge.End();
         }
         break;
     }
@@ -1914,6 +1929,26 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
             splitHudTextHelper.SetDisplaySize(static_cast<int>(15 * textScale));
             splitHudTextHelper.Begin();
 
+            const bool showSplitRaceResult = raceFinished;
+            static TextHelper splitResultTextHelper(g_pFontLarge, g_pSprite, 25);
+            const int splitResultDisplaySize = static_cast<int>(25 * textScale);
+            const int splitResultY = (BASE_HEIGHT - splitResultDisplaySize) / 2;
+            const bool player1WonRace = raceWon;
+            const std::wstring player1ResultLabel = player1WonRace ? L"RACE WON" : L"RACE LOST";
+            const std::wstring player2ResultLabel = player1WonRace ? L"RACE LOST" : L"RACE WON";
+            glm::vec4 splitResultColor(0.0f, 0.0f, 0.0f, 1.0f);
+            if (showSplitRaceResult) {
+                if (GameMode != GAME_OVER) {
+                    const double currentTime = GetTimeSeconds();
+                    const double finishDisplayTime = (gameEndTime > 0.0) ? (currentTime - gameEndTime) : 0.0;
+                    const long intTime = static_cast<long>(finishDisplayTime);
+                    if ((finishDisplayTime - static_cast<double>(intTime)) < 0.5)
+                        splitResultColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+                }
+                splitResultTextHelper.SetDisplaySize(splitResultDisplaySize);
+                splitResultTextHelper.Begin();
+            }
+
             const long p1x = static_cast<long>(LerpLong(prev_player1_x, player1_x, alpha));
             const long p1y = static_cast<long>(LerpLong(prev_player1_y, player1_y, alpha));
             const long p1z = static_cast<long>(LerpLong(prev_player1_z, player1_z, alpha));
@@ -1951,6 +1986,10 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
                                    topViewY, topViewZ, topViewXa, topViewYa, topViewZa, bOutsideView, true,
                                    !bOutsideView, 0);
             DrawGameplayCockpitHudForInstance(splitHudTextHelper, 0, lapNumber[PLAYER], opponentsDistanceFromPlayer1);
+            if (showSplitRaceResult) {
+                splitResultTextHelper.SetForegroundColor(splitResultColor);
+                DrawCenteredTextLine(splitResultTextHelper, player1ResultLabel, splitResultY);
+            }
 
             // Player 2 viewport: always draw player 1; draw player 2 only when outside view.
             PrepareInterpolatedShadowsForView(1, alpha);
@@ -1959,6 +1998,11 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
                                    bOutsideView, !bOutsideView, 1);
             DrawGameplayCockpitHudForInstance(splitHudTextHelper, 1, lapNumber[OPPONENT], -opponentsDistanceFromPlayer1);
             splitHudTextHelper.End();
+            if (showSplitRaceResult) {
+                splitResultTextHelper.SetForegroundColor(splitResultColor);
+                DrawCenteredTextLine(splitResultTextHelper, player2ResultLabel, splitResultY);
+                splitResultTextHelper.End();
+            }
 
             // Restore full viewport for text rendering and subsequent frames.
             glViewport(fullVp[0], fullVp[1], fullVp[2], fullVp[3]);
