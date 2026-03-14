@@ -225,6 +225,7 @@ static long render_backdrop_viewpoint_z_angle = 0;
 static void ResetControlSamplingWindow(void);
 static void ApplyWindowLayout(int windowWidth, int windowHeight, bool logLayout);
 static void RefreshCombinedInput(void);
+static void InitialiseBoostStartStateForRace(long reserve);
 
 #ifdef USE_SDL2
 static void ResetGamepadSlots(void);
@@ -1350,20 +1351,20 @@ static void HandleTrackPreview(TextHelper& txtHelper) {
         ResetLapData(PLAYER);
         gameStartTime = GetTimeSeconds();
         gameEndTime = 0;
+        long initialBoostReserve = StandardBoost;
         if (bSuperLeague) {
-            boostReserve = SuperBoost;
+            initialBoostReserve = SuperBoost;
             road_cushion_value = 1;
             engine_power = 320;
             boost_unit_value = 12;
             opp_engine_power = 314;
         } else {
-            boostReserve = StandardBoost; // SuperBoost for super league
             road_cushion_value = 0;
             engine_power = 240;
             boost_unit_value = 16;
             opp_engine_power = 236;
         }
-        boostUnit = 0;
+        InitialiseBoostStartStateForRace(initialBoostReserve);
         bPlayerPaused = bOpponentPaused = FALSE;
         keyPress = '\0';
     }
@@ -1519,6 +1520,19 @@ static void QueueMultiplayerCarCollisionImpulsesForStep(void) {
 
     QueueMultiplayerCarCollisionImpulse(0, xImpulse, yImpulse, zImpulse, true);
     QueueMultiplayerCarCollisionImpulse(1, -xImpulse, -yImpulse, -zImpulse, true);
+}
+
+static void SetBoostStartStateForInstance(long instanceIndex, long reserve) {
+    const long previousInstance = PushCarBehaviourInstance(instanceIndex);
+    boostReserve = reserve;
+    boostUnit = 0;
+    PopCarBehaviourInstance(previousInstance);
+}
+
+static void InitialiseBoostStartStateForRace(long reserve) {
+    SetBoostStartStateForInstance(0, reserve);
+    if (bMultiplayerMode)
+        SetBoostStartStateForInstance(1, reserve);
 }
 
 static void DrawGameplayCockpitHud(TextHelper& txtHelper, long lapValue, long opponentsDistance) {
