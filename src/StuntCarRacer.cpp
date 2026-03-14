@@ -188,6 +188,19 @@ extern long engine_power;
 extern long boost_unit_value;
 extern long opp_engine_power;
 
+static long ResolveDamagedLimitForTrackLeague(void) {
+    // Original Amiga loads damaged.limit from per-track metadata bytes (B.1ca2a/B.1ca2b).
+    // Converted PC track data does not currently carry those bytes, so use a league-aware
+    // fallback that matches original broad pacing better than the legacy fixed value (10).
+    static const unsigned char kStandardLeagueDamageLimitByTrack[NUM_TRACKS] = {7, 7, 7, 7, 7, 7, 7, 7};
+    static const unsigned char kSuperLeagueDamageLimitByTrack[NUM_TRACKS] = {7, 3, 3, 3, 3, 3, 7, 3};
+
+    const unsigned char* table = bSuperLeague ? kSuperLeagueDamageLimitByTrack : kStandardLeagueDamageLimitByTrack;
+    if (TrackID < 0 || TrackID >= NUM_TRACKS)
+        return bSuperLeague ? 3 : 7;
+    return static_cast<long>(table[TrackID]);
+}
+
 //-----------------------------------------------------------------------------
 // Static variables
 //-----------------------------------------------------------------------------
@@ -1429,6 +1442,7 @@ static void HandleTrackPreview(TextHelper& txtHelper) {
             boost_unit_value = 16;
             opp_engine_power = 236;
         }
+        damaged_limit = ResolveDamagedLimitForTrackLeague();
         InitialiseBoostStartStateForRace(initialBoostReserve);
         bPlayerPaused = bOpponentPaused = FALSE;
         keyPress = '\0';

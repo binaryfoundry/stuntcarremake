@@ -198,6 +198,11 @@ static long damaged_count = 0;
 /** Max damage applications per logic tick (one per wheel); cleared by BeginLogicTickDamagePeriod(). */
 static int g_damageApplicationsThisLogicPeriod = 0;
 static const int kMaxDamageApplicationsPerLogicTick = 3;
+/** Bitmask of wheels that have already applied damage in the current logic period. */
+static unsigned int g_damageAppliedWheelMaskThisLogicPeriod = 0;
+static const unsigned int kDamageMaskFrontLeftWheel = (1u << 0);
+static const unsigned int kDamageMaskFrontRightWheel = (1u << 1);
+static const unsigned int kDamageMaskRearWheel = (1u << 2);
 /** Latched max damage for the current logic period (consumed by UpdateDamage once per logic tick). */
 static long g_logicTickDamageValue = 0;
 /** Latched "damaged" flag for the current logic period (consumed by UpdateDamage once per logic tick). */
@@ -271,7 +276,7 @@ static void CalculateGravityAcceleration(void);
 static void CarCollisionDetection(void);
 static void CalculateWheelCollision(long road_height, long actual_height, long* height_difference_out,
                                     long* old_difference_in_out, long* amount_below_road_in_out, long* damage_in_out,
-                                    long spring, long damping);
+                                    long spring, long damping, unsigned int wheelDamageMask);
 static void CalculateCarCollisionAcceleration(long average_amount_below_road);
 static void CalculateInclinationSinCos(long inclination_in, long* inclination_sin_out, long* inclination_cos_out);
 static void LiftCarOntoTrack(void);
@@ -398,6 +403,7 @@ void ResetPlayer(void) {
     damaged_count = 0;
     damaged = 0;
     g_damageApplicationsThisLogicPeriod = 0;
+    g_damageAppliedWheelMaskThisLogicPeriod = 0;
 
     front_left_amount_below_road = 0;
     front_right_amount_below_road = 0;
@@ -895,6 +901,7 @@ void AdvanceBoostReserve(DWORD logicInput) {
 
 void BeginLogicTickDamagePeriod(void) {
     g_damageApplicationsThisLogicPeriod = 0;
+    g_damageAppliedWheelMaskThisLogicPeriod = 0;
     g_logicTickDamageValue = 0;
     g_logicTickDamaged = 0;
 }
@@ -1928,17 +1935,17 @@ static void CarCollisionDetection(void) {
     // Front left wheel collision
     CalculateWheelCollision(front_left_road_height, front_left_actual_height, &front_left_height_difference,
                             &old_front_left_difference, &front_left_amount_below_road, &front_left_damage,
-                            FRONT_SUSPENSION_SPRING, FRONT_SUSPENSION_DAMPING);
+                            FRONT_SUSPENSION_SPRING, FRONT_SUSPENSION_DAMPING, kDamageMaskFrontLeftWheel);
 
     // Front right wheel collision
     CalculateWheelCollision(front_right_road_height, front_right_actual_height, &front_right_height_difference,
                             &old_front_right_difference, &front_right_amount_below_road, &front_right_damage,
-                            FRONT_SUSPENSION_SPRING, FRONT_SUSPENSION_DAMPING);
+                            FRONT_SUSPENSION_SPRING, FRONT_SUSPENSION_DAMPING, kDamageMaskFrontRightWheel);
 
     // Rear wheel collision
     CalculateWheelCollision(rear_road_height, rear_actual_height, &rear_height_difference, &old_rear_difference,
                             &rear_amount_below_road, &rear_damage,
-                            REAR_SUSPENSION_SPRING, REAR_SUSPENSION_DAMPING);
+                            REAR_SUSPENSION_SPRING, REAR_SUSPENSION_DAMPING, kDamageMaskRearWheel);
 
     //****************************************
 
@@ -2031,7 +2038,7 @@ static void CarCollisionDetection(void) {
 
 static void CalculateWheelCollision(long road_height, long actual_height, long* height_difference_out,
                                     long* old_difference_in_out, long* amount_below_road_in_out, long* damage_in_out,
-                                    long spring, long damping) {
+                                    long spring, long damping, unsigned int wheelDamageMask) {
     long new_difference;
     long amount_below_road, old_amount_below_road;
     long damage;
@@ -2049,10 +2056,23 @@ static void CalculateWheelCollision(long road_height, long actual_height, long* 
     else if (new_difference < -0x300)
         new_difference = -0x300;
 
-    amount_below_road = new_difference - *old_difference_in_out;
-    /* spring scales the velocity term (rate of penetration change = damping feedback);
-       damping scales the position term (current penetration depth = spring stiffness). */
-    amount_below_road = ((amount_below_road * spring_effective) >> 8) + ((new_difference * damping) >> 8);
+    // Assembly parity for calculate.difference uses 16-bit word arithmetic:
+    // muls spring,d0 ; asr.l #8,d0 ; add.w d6,d0
+    // Keep the wheel-collision response in signed-word space to avoid overdriving
+    // penetration/damage when running with faster update rates.
+    {
+        const short delta_word = static_cast<short>(new_difference - *old_difference_in_out);
+        const short spring_word = static_cast<short>(spring_effective);
+        const short damping_word = static_cast<short>(damping);
+        const short new_difference_word = static_cast<short>(new_difference);
+
+        const long spring_term_long = (static_cast<long>(delta_word) * static_cast<long>(spring_word)) >> 8;
+        const long damping_term_long = (static_cast<long>(new_difference_word) * static_cast<long>(damping_word)) >> 8;
+
+        const short spring_term_word = static_cast<short>(spring_term_long);
+        const short damping_term_word = static_cast<short>(damping_term_long);
+        amount_below_road = static_cast<long>(static_cast<short>(spring_term_word + damping_term_word));
+    }
 
     if (amount_below_road >= 0) {
         old_amount_below_road = *amount_below_road_in_out;
@@ -2067,7 +2087,11 @@ static void CalculateWheelCollision(long road_height, long actual_height, long* 
                 damage_value = damage;
 
             damage -= 0x600;
-            if (g_damageApplicationsThisLogicPeriod < kMaxDamageApplicationsPerLogicTick) {
+            // Assembly parity: only allow damage accumulation on fourteen-frame ticks.
+            // (tst.b fourteen.frames.elapsed / bmi skip damage increment)
+            if ((fourteen_frames_elapsed == 0) &&
+                (g_damageApplicationsThisLogicPeriod < kMaxDamageApplicationsPerLogicTick) &&
+                ((g_damageAppliedWheelMaskThisLogicPeriod & wheelDamageMask) == 0u)) {
                 damaged_count++;
                 if (damaged_count < damaged_limit) {
                     damage /= 256;
@@ -2079,6 +2103,7 @@ static void CalculateWheelCollision(long road_height, long actual_height, long* 
                         damage = 0xff;
                     *damage_in_out = damage;
                     damaged = 0x80;
+                    g_damageAppliedWheelMaskThisLogicPeriod |= wheelDamageMask;
                     g_damageApplicationsThisLogicPeriod++;
                 }
             }
@@ -3513,6 +3538,7 @@ static int pendingEngineSoundIndexCount = 0;
     X(long, damage_value)                           \
     X(long, damaged_count)                          \
     X(int, g_damageApplicationsThisLogicPeriod)     \
+    X(unsigned int, g_damageAppliedWheelMaskThisLogicPeriod) \
     X(long, g_logicTickDamageValue)                 \
     X(long, g_logicTickDamaged)                     \
     X(long, front_left_amount_below_road)           \
@@ -3639,6 +3665,7 @@ static CarBehaviourInstanceState BuildFreshCarBehaviourState(void) {
     g_roadHeightPrevTrackID = NO_TRACK;
     g_steeringPiece = 0;
     g_damageApplicationsThisLogicPeriod = 0;
+    g_damageAppliedWheelMaskThisLogicPeriod = 0;
     CarBehaviourInstanceState fresh = CaptureActiveCarBehaviourState();
     ApplyCarBehaviourState(saved);
     return fresh;
