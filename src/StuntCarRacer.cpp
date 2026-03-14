@@ -1537,6 +1537,36 @@ static void InitialiseBoostStartStateForRace(long reserve) {
         SetBoostStartStateForInstance(1, reserve);
 }
 
+static void BeginLogicTickDamagePeriodForActiveCars(void) {
+    {
+        const long previousInstance = PushCarBehaviourInstance(0);
+        BeginLogicTickDamagePeriod();
+        PopCarBehaviourInstance(previousInstance);
+    }
+
+    if (!bMultiplayerMode)
+        return;
+
+    const long previousInstance = PushCarBehaviourInstance(1);
+    BeginLogicTickDamagePeriod();
+    PopCarBehaviourInstance(previousInstance);
+}
+
+static void UpdateDamageForActiveCars(void) {
+    {
+        const long previousInstance = PushCarBehaviourInstance(0);
+        UpdateDamage();
+        PopCarBehaviourInstance(previousInstance);
+    }
+
+    if (!bMultiplayerMode)
+        return;
+
+    const long previousInstance = PushCarBehaviourInstance(1);
+    UpdateDamage();
+    PopCarBehaviourInstance(previousInstance);
+}
+
 static void DrawGameplayCockpitHud(TextHelper& txtHelper, long lapValue, long opponentsDistance) {
     WCHAR lapText[3] = L"  ";
     if (lapValue > 0)
@@ -2041,8 +2071,6 @@ void CALLBACK OnFrameRender(RenderDevice* pDevice, double fTime, float fElapsedT
                 DrawOtherGraphics();
 
             //jsr    display.speed.bar
-            if (bFrameMoved)
-                UpdateDamage();
             //jsr    display.opponents.distance
         }
 
@@ -2718,11 +2746,13 @@ static bool RunFrame(double frameTime, bool allowQuit) {
     // --- Game-logic tick at fixed PHYSICS_REFERENCE_STEP_SECONDS (real time) ---
     while (g_logicTickAccumulator >= g_logicTickInterval) {
         g_logicTickAccumulator -= g_logicTickInterval;
-        BeginLogicTickDamagePeriod();  // allow damage to be applied again (once per wheel per tick)
         g_logicInput = BuildLogicInputFromSamples(lastInput);
         AdvanceBoostReserve(g_logicInput);  // drain boost once per logic tick (was 50x/sec in BoostPower)
         ResetControlSamplingWindow();
         OnFrameMove(&pDevice, frameTime, static_cast<float>(g_logicTickInterval), NULL);
+        if ((GameMode == GAME_IN_PROGRESS) && bFrameMoved)
+            UpdateDamageForActiveCars();
+        BeginLogicTickDamagePeriodForActiveCars(); // allow damage to be applied again (once per wheel per logic tick)
         ++g_baseLogicTicksInWindow;
         ++g_baseLogicTickTotal;
         if (bFrameMoved)

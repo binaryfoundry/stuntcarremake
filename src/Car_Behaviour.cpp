@@ -197,6 +197,20 @@ static long damaged_count = 0;
 /** Max damage applications per logic tick (one per wheel); cleared by BeginLogicTickDamagePeriod(). */
 static int g_damageApplicationsThisLogicPeriod = 0;
 static const int kMaxDamageApplicationsPerLogicTick = 3;
+/** Latched max damage for the current logic period (consumed by UpdateDamage once per logic tick). */
+static long g_logicTickDamageValue = 0;
+/** Latched "damaged" flag for the current logic period (consumed by UpdateDamage once per logic tick). */
+static long g_logicTickDamaged = 0;
+
+static const long kMaxDamageHoles = 10;
+/* Original smash cooldown is 69 frames at 50 Hz -> scale to current logic-tick duration. */
+static const long kSmashCountdownTicks = []() -> long {
+    const double originalSeconds = 69.0 / 50.0;
+    long ticks = static_cast<long>((originalSeconds / PHYSICS_REFERENCE_STEP_SECONDS) + 0.5);
+    if (ticks < 1)
+        ticks = 1;
+    return ticks;
+}();
 
 long front_left_amount_below_road = 0, front_right_amount_below_road = 0, rear_amount_below_road = 0;
 
@@ -377,9 +391,12 @@ void ResetPlayer(void) {
     // calculated
     grounded_count = 0;
     damage_value = 0;
+    g_logicTickDamageValue = 0;
+    g_logicTickDamaged = 0;
 
     damaged_count = 0;
     damaged = 0;
+    g_damageApplicationsThisLogicPeriod = 0;
 
     front_left_amount_below_road = 0;
     front_right_amount_below_road = 0;
@@ -877,6 +894,8 @@ void AdvanceBoostReserve(DWORD logicInput) {
 
 void BeginLogicTickDamagePeriod(void) {
     g_damageApplicationsThisLogicPeriod = 0;
+    g_logicTickDamageValue = 0;
+    g_logicTickDamaged = 0;
 }
 
 /*    ======================================================================================= */
@@ -1961,6 +1980,11 @@ static void CarCollisionDetection(void) {
 
     CarToCarCollision();
 
+    if (damage_value > g_logicTickDamageValue)
+        g_logicTickDamageValue = damage_value;
+    if (damaged)
+        g_logicTickDamaged = 0x80;
+
     //****************************************
 
     //******** Play grounded sound if necessary ********
@@ -2031,8 +2055,7 @@ static void CalculateWheelCollision(long road_height, long actual_height, long* 
                 damage_value = damage;
 
             damage -= 0x600;
-            if (fourteen_frames_elapsed == 0 &&
-                g_damageApplicationsThisLogicPeriod < kMaxDamageApplicationsPerLogicTick) {
+            if (g_damageApplicationsThisLogicPeriod < kMaxDamageApplicationsPerLogicTick) {
                 damaged_count++;
                 if (damaged_count < damaged_limit) {
                     damage /= 256;
@@ -3478,6 +3501,8 @@ static int pendingEngineSoundIndexCount = 0;
     X(long, damage_value)                           \
     X(long, damaged_count)                          \
     X(int, g_damageApplicationsThisLogicPeriod)     \
+    X(long, g_logicTickDamageValue)                 \
+    X(long, g_logicTickDamaged)                     \
     X(long, front_left_amount_below_road)           \
     X(long, front_right_amount_below_road)          \
     X(long, rear_amount_below_road)                 \
@@ -4164,6 +4189,11 @@ on_an_edge:
 /*    ======================================================================================= */
 
 void UpdateDamage(void) {
+    if (g_logicTickDamageValue > damage_value)
+        damage_value = g_logicTickDamageValue;
+    if (g_logicTickDamaged)
+        damaged = 0x80;
+
     if (damaged) {
         long d = (front_left_damage + front_right_damage) / 2; // average front damage
         new_damage = (d + rear_damage) / 2;                    // total average damage
@@ -4171,10 +4201,10 @@ void UpdateDamage(void) {
     }
 
     if (smashed_countdown) {
+        const long previousSmashedCountdown = smashed_countdown;
         --smashed_countdown;
-        if (smashed_countdown == 69) {
-            // change smash to hole, by copying 'damage hole' graphic to damage.hole.position
-            nholes++;
+        if (previousSmashedCountdown == kSmashCountdownTicks) {
+            // Match original timing: change smashed-hole graphic to regular hole on the first tick after smash.
             goto PlayCreakSound;
         }
 
@@ -4190,18 +4220,20 @@ void UpdateDamage(void) {
     if (damage_value < 0x1400)
         goto PlayCreakSound;
 
-    // if (damage.hole.position == 0) goto PlayCreakSound;
-    //--damage.hole.position
-    // copy 'damage hole smashed' graphic to damage.hole.position
+    if (nholes >= kMaxDamageHoles)
+        goto PlayCreakSound;
+
+    // Consume one hole slot and show the smashed-hole state (regular hole follows on next logic tick).
     nholes++;
 
-    smashed_countdown = 69;
+    smashed_countdown = kSmashCountdownTicks;
 
     // Play smash sound effect
     if (IsAudioEnabled() && SmashSoundBuffer && !SmashSoundBuffer->IsPlaying()) {
         SmashSoundBuffer->SetCurrentPosition(0);
         SmashSoundBuffer->Play(NULL, NULL, NULL); // not looping
     }
+    damaged = 0;
     return;
 
 PlayCreakSound:
@@ -4219,6 +4251,7 @@ PlayCreakSound:
             CreakSoundBuffer->Play(NULL, NULL, NULL); // not looping
         }
     }
+    damaged = 0;
     return;
 }
 
