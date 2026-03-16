@@ -70,13 +70,33 @@
       .credit-overlay a:hover .icon-gh { color: #e6edf3; }
       .credit-overlay .icon-x { color: #a0a0a8; }
       .credit-overlay a:hover .icon-x { color: #f5f5f5; }
+      /* Join mode: video only, scaled to page with aspect ratio maintained; no game UI */
+      body.webrtc-join-mode .emscripten { display: none !important; }
+      body.webrtc-join-mode #webrtcRemoteVideo {
+        display: block !important;
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        object-position: center;
+      }
     </style>
   </head>
   <body>
+    <script type="text/javascript">
+      (function() {
+        var q = new URLSearchParams(window.location.search);
+        window.WEBRTC_JOIN_MODE = !!(q.get('join') === '1' && q.get('room'));
+        if (window.WEBRTC_JOIN_MODE) document.body.classList.add('webrtc-join-mode');
+      })();
+    </script>
     <div class="emscripten">
       <canvas id="canvas" class="game" oncontextmenu="event.preventDefault()"></canvas>
       <div class="loading">Loading...</div>
     </div>
+    <video id="webrtcRemoteVideo" autoplay playsinline style="display:none;pointer-events:none;"></video>
     <div class="credit-overlay" aria-label="Links">
       <a href="https://github.com/binaryfoundry/multistuntcar" target="_blank" rel="noopener noreferrer" title="GitHub – MultiStuntCar">
         <svg class="icon icon-gh" viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -88,6 +108,7 @@
     <script type="text/javascript">
         const $game = document.querySelector('.game');
         function resize() {
+            if (window.WEBRTC_JOIN_MODE) return;
             const canvas = document.getElementById('canvas');
             if (!canvas || typeof Module === 'undefined' || !Module.canvas) return;
             const w = Math.max(1, window.innerWidth);
@@ -107,6 +128,17 @@
             canvas: document.getElementById('canvas') || $game,
             noStdioInit: true
         };
+        if (window.WEBRTC_JOIN_MODE) Module.noInitialRun = true;
+        // Strip WebRTC query params from argv so the game does not see host=1, room=, join= as CLI args
+        (Module.preRun = Module.preRun || []).push(function() {
+            if (Module['arguments']) {
+                var webRtcKeys = { host: 1, room: 1, join: 1 };
+                Module['arguments'] = Module['arguments'].filter(function(a) {
+                    var key = (String(a).split('=')[0] || '').toLowerCase();
+                    return !webRtcKeys[key];
+                });
+            }
+        });
         window.addEventListener('resize', resize, false);
         window.triggerResize = resize;
         if (document.readyState === 'loading') {
@@ -131,6 +163,224 @@
         }
         $game.addEventListener('click', resumeAudio);
         document.addEventListener('keydown', resumeAudio);
+
+        // WebRTC multiplayer: auto-host with 8-digit room, or auto-join via ?join=1&room=XXXXXXXX
+        (function() {
+            const SIGNAL_BASE = "https://tiny-signal.retrofoundry.workers.dev";
+            const canvas = document.getElementById('canvas');
+            const remoteVideo = document.getElementById('webrtcRemoteVideo');
+
+            function makeRoomId() {
+                return String(Math.floor(10000000 + Math.random() * 90000000));
+            }
+
+            function buildGuestJoinUrl(roomId) {
+                var url = new URL(window.location.href);
+                url.search = '';
+                url.hash = '';
+                url.searchParams.set('join', '1');
+                url.searchParams.set('room', roomId);
+                return url.toString();
+            }
+
+            const state = {
+                role: null,
+                room: null,
+                peerId: crypto.randomUUID(),
+                targetPeerId: null,
+                ws: null,
+                pc: null,
+                dc: null,
+                streamAdded: false,
+                gamepadLoopHandle: null
+            };
+
+            const guestInput = {
+                keys: new Set(),
+                gamepads: new Map()
+            };
+
+            async function createSession(room, peer) {
+                const res = await fetch(SIGNAL_BASE + '/session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room, peer })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to create session');
+                return data;
+            }
+
+            function setupPeerConnection() {
+                const pc = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                });
+
+                pc.onicecandidate = function(event) {
+                    if (!event.candidate || !state.targetPeerId || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+                    state.ws.send(JSON.stringify({ type: 'ice', to: state.targetPeerId, payload: event.candidate }));
+                };
+
+                pc.ontrack = function(event) {
+                    if (state.role === 'guest') remoteVideo.srcObject = event.streams[0];
+                };
+
+                pc.ondatachannel = function(event) {
+                    state.dc = event.channel;
+                    state.dc.onopen = function() { /* data channel open */ };
+                    state.dc.onmessage = function(e) {
+                        if (state.role !== 'host') return;
+                        try {
+                            const msg = JSON.parse(e.data);
+                            handleGuestInput(msg);
+                        } catch (err) { console.error('Bad data channel message', err); }
+                    };
+                };
+
+                state.pc = pc;
+                return pc;
+            }
+
+            function handleGuestInput(msg) {
+                if (msg.type === 'key') {
+                    const key = String(msg.key || '');
+                    if (!key) return;
+                    if (msg.down) guestInput.keys.add(key);
+                    else guestInput.keys.delete(key);
+                    if (typeof Module !== 'undefined' && Module.onGuestKey) Module.onGuestKey(key, msg.down);
+                    return;
+                }
+                if (msg.type === 'gamepad') {
+                    if (typeof msg.index !== 'number') return;
+                    guestInput.gamepads.set(msg.index, { id: msg.id || '', axes: Array.isArray(msg.axes) ? msg.axes : [], buttons: Array.isArray(msg.buttons) ? msg.buttons : [] });
+                    return;
+                }
+                if (msg.type === 'gamepad-disconnect') {
+                    if (typeof msg.index !== 'number') return;
+                    guestInput.gamepads.delete(msg.index);
+                }
+            }
+
+            async function connectSignaling(room, peer) {
+                const session = await createSession(room, peer);
+                const ws = new WebSocket(session.wsUrl);
+                state.ws = ws;
+                await new Promise(function(resolve, reject) {
+                    ws.onopen = resolve;
+                    ws.onerror = function() { reject(new Error('WebSocket failed')); };
+                });
+                ws.onmessage = async function(event) {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'peers') {
+                        const others = (msg.peers || []).filter(function(id) { return id !== state.peerId; });
+                        if (state.role === 'host' && others.length && !state.targetPeerId) {
+                            state.targetPeerId = others[0];
+                            await startHostOffer();
+                        }
+                        if (state.role === 'host' && !others.length) state.targetPeerId = null;
+                    }
+                    if (msg.type === 'offer') {
+                        state.targetPeerId = msg.from;
+                        await state.pc.setRemoteDescription(msg.payload);
+                        const answer = await state.pc.createAnswer();
+                        await state.pc.setLocalDescription(answer);
+                        ws.send(JSON.stringify({ type: 'answer', to: state.targetPeerId, payload: answer }));
+                    }
+                    if (msg.type === 'answer') await state.pc.setRemoteDescription(msg.payload);
+                    if (msg.type === 'ice') {
+                        try { await state.pc.addIceCandidate(msg.payload); } catch (err) { console.error('ICE candidate error', err); }
+                    }
+                };
+            }
+
+            async function startHostOffer() {
+                if (!state.streamAdded && canvas) {
+                    try {
+                        const stream = canvas.captureStream(30);
+                        for (var i = 0; i < stream.getTracks().length; i++) state.pc.addTrack(stream.getTracks()[i], stream);
+                        state.streamAdded = true;
+                    } catch (err) { console.error('captureStream failed', err); }
+                }
+                if (!state.dc) {
+                    state.dc = state.pc.createDataChannel('inputs');
+                    state.dc.onopen = function() { };
+                    state.dc.onmessage = function(e) {
+                        try {
+                            const msg = JSON.parse(e.data);
+                            handleGuestInput(msg);
+                        } catch (err) { console.error('Bad data channel message', err); }
+                    };
+                }
+                const offer = await state.pc.createOffer();
+                await state.pc.setLocalDescription(offer);
+                state.ws.send(JSON.stringify({ type: 'offer', to: state.targetPeerId, payload: offer }));
+            }
+
+            function sendInput(payload) {
+                if (state.role !== 'guest' || !state.dc || state.dc.readyState !== 'open') return;
+                state.dc.send(JSON.stringify(payload));
+            }
+
+            function setupGuestInput() {
+                window.addEventListener('keydown', function(e) {
+                    if (state.role !== 'guest') return;
+                    sendInput({ type: 'key', key: e.key, code: e.code, down: true });
+                    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Spacebar'].includes(e.key) || e.code === 'Space') e.preventDefault();
+                }, { passive: false });
+                window.addEventListener('keyup', function(e) {
+                    if (state.role !== 'guest') return;
+                    sendInput({ type: 'key', key: e.key, code: e.code, down: false });
+                    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Spacebar'].includes(e.key) || e.code === 'Space') e.preventDefault();
+                }, { passive: false });
+                function snapshotGamepad(gp) {
+                    return { type: 'gamepad', index: gp.index, id: gp.id, axes: (gp.axes || []).map(function(v) { return Math.round(v * 1000) / 1000; }), buttons: (gp.buttons || []).map(function(btn) { return { pressed: !!btn.pressed, touched: !!btn.touched, value: Math.round(btn.value * 1000) / 1000 }; }) };
+                }
+                function pollGamepads() {
+                    if (state.role !== 'guest') return;
+                    var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+                    for (var i = 0; i < (pads.length || 0); i++) {
+                        if (!pads[i]) continue;
+                        sendInput(snapshotGamepad(pads[i]));
+                    }
+                    state.gamepadLoopHandle = requestAnimationFrame(pollGamepads);
+                }
+                window.addEventListener('gamepadconnected', function(e) { if (state.role === 'guest') sendInput(snapshotGamepad(e.gamepad)); });
+                window.addEventListener('gamepaddisconnected', function(e) { if (state.role === 'guest') sendInput({ type: 'gamepad-disconnect', index: e.gamepad.index }); });
+                pollGamepads();
+            }
+
+            async function startHost() {
+                state.role = 'host';
+                state.room = makeRoomId();
+                state.targetPeerId = null;
+                var joinUrl = buildGuestJoinUrl(state.room);
+                console.log('WebRTC join URL (share with guest):', joinUrl);
+                setupPeerConnection();
+                await connectSignaling(state.room, state.peerId);
+            }
+
+            async function startGuest(roomId) {
+                state.role = 'guest';
+                state.room = roomId;
+                setupPeerConnection();
+                await connectSignaling(state.room, state.peerId);
+            }
+
+            setupGuestInput();
+
+            var urlParams = new URLSearchParams(window.location.search);
+            var roomFromUrl = urlParams.get('room');
+            var shouldJoin = urlParams.get('join') === '1';
+
+            if (shouldJoin && roomFromUrl) {
+                startGuest(roomFromUrl).catch(function(err) { console.error('WebRTC join failed', err); });
+            } else {
+                startHost().catch(function(err) { console.error('WebRTC host failed', err); });
+            }
+        })();
     </script>
     {{{ SCRIPT }}}
   </body>
