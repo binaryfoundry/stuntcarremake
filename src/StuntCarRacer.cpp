@@ -2919,11 +2919,11 @@ static bool RunFrame(double frameTime, bool allowQuit) {
         }
     }
 
-    // Stereo separation in split-screen: P1 panned left, P2 right.
-    // In WebRTC remote mode the JS layer splits the stereo output via a ChannelSplitter and
-    // routes the left channel (P1) to the host's speakers and the right channel (P2) to a
-    // MediaStreamDestinationNode sent to the guest.  Full L/R pan is therefore required in
-    // that mode; a mild ±4000 pan is used for local split-screen so it sounds natural.
+    // Split-screen audio: two modes.
+    // - WebRTC connected: full L/R pan only; JS ChannelSplitter sends left (P1) to host speakers
+    //   and right (P2) to a separate audio track for the guest. No volume reduction or detune.
+    // - Local split-screen only: mild ±4000 pan, reduced volume (48/3), and P2 detune (0.98f)
+    //   so both cars mix nicely on one device.
     {
         static bool s_prevSplitScreen = false;
 #ifdef __EMSCRIPTEN__
@@ -2937,7 +2937,7 @@ static bool RunFrame(double frameTime, bool allowQuit) {
             if (splitScreenGameplay) {
                 const long p1Pan = webrtcActive ? DSBPAN_LEFT : -4000;
                 const long p2Pan = webrtcActive ? DSBPAN_RIGHT : 4000;
-                const long vol = AmigaVolumeToMixerGain(48 / 3);
+                const long vol = webrtcActive ? AmigaVolumeToMixerGain(48 / 2) : AmigaVolumeToMixerGain(48 / 3);
                 for (int i = 0; i < 8; ++i) {
                     if (EngineSoundBuffers[i])  { EngineSoundBuffers[i]->SetPan(p1Pan);  EngineSoundBuffers[i]->SetVolume(vol); }
                     if (EngineSoundBuffers2[i]) { EngineSoundBuffers2[i]->SetPan(p2Pan); EngineSoundBuffers2[i]->SetVolume(vol); }
@@ -3011,7 +3011,12 @@ static bool RunFrame(double frameTime, bool allowQuit) {
                     FramesWheelsEngineSubstep(EngineSoundBuffers, g_physicsSubstepsPerBaseLogic);
                     if (splitScreen) {
                         const long prev1 = PushCarBehaviourInstance(1);
-                        FramesWheelsEngineSubstep(EngineSoundBuffers2, g_physicsSubstepsPerBaseLogic, 0.98f);
+#ifdef __EMSCRIPTEN__
+                        const float p2Pitch = g_webrtcGuestConnected ? 1.0f : 0.98f;
+#else
+                        const float p2Pitch = 0.98f;
+#endif
+                        FramesWheelsEngineSubstep(EngineSoundBuffers2, g_physicsSubstepsPerBaseLogic, p2Pitch);
                         PopCarBehaviourInstance(prev1);
                     }
                 } else if (engineSoundPlaying) {
@@ -3021,7 +3026,12 @@ static bool RunFrame(double frameTime, bool allowQuit) {
                 FramesWheelsEngineSubstep(EngineSoundBuffers, g_physicsSubstepsPerBaseLogic);
                 if (splitScreen) {
                     const long prev1 = PushCarBehaviourInstance(1);
-                    FramesWheelsEngineSubstep(EngineSoundBuffers2, g_physicsSubstepsPerBaseLogic, 0.98f);
+#ifdef __EMSCRIPTEN__
+                    const float p2Pitch = g_webrtcGuestConnected ? 1.0f : 0.98f;
+#else
+                    const float p2Pitch = 0.98f;
+#endif
+                    FramesWheelsEngineSubstep(EngineSoundBuffers2, g_physicsSubstepsPerBaseLogic, p2Pitch);
                     PopCarBehaviourInstance(prev1);
                 }
             }

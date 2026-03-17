@@ -589,15 +589,17 @@
             }
 
             async function startHostOffer() {
+                // Video only from canvas (captureStream has no audio); guest audio is a separate P2-only track below.
                 if (!state.streamAdded && canvas) {
                     try {
                         const stream = canvas.captureStream(30);
                         state.captureStream = stream;
-                        for (var i = 0; i < stream.getTracks().length; i++) state.pc.addTrack(stream.getTracks()[i], stream);
+                        var videoTracks = stream.getVideoTracks();
+                        for (var i = 0; i < videoTracks.length; i++) state.pc.addTrack(videoTracks[i], stream);
                         state.streamAdded = true;
                     } catch (err) { console.error('captureStream failed', err); }
                 }
-                // Add P2 audio track (right channel from channel splitter) for the guest to hear.
+                // P2-only audio from channel splitter (right channel); not from video. One track, same stream ID as video for sync.
                 if (!state.p2AudioTrackAdded && state.captureStream && state.p2AudioStream) {
                     var audioTracks = state.p2AudioStream.getAudioTracks();
                     for (var t = 0; t < audioTracks.length; t++) {
