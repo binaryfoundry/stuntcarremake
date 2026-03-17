@@ -397,17 +397,19 @@
                     return { type: 'gamepad', index: gp.index, id: gp.id, axes: (gp.axes || []).map(function(v) { return Math.round(v * 1000) / 1000; }), buttons: (gp.buttons || []).map(function(btn) { return { pressed: !!btn.pressed, touched: !!btn.touched, value: Math.round(btn.value * 1000) / 1000 }; }) };
                 }
                 function pollGamepads() {
-                    if (state.role !== 'guest') return;
-                    var pads = navigator.getGamepads ? navigator.getGamepads() : [];
-                    for (var i = 0; i < (pads.length || 0); i++) {
-                        if (!pads[i]) continue;
-                        sendInput(snapshotGamepad(pads[i]));
+                    // Always keep the loop alive; only send when we are actually a guest.
+                    if (state.role === 'guest') {
+                        var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+                        for (var i = 0; i < (pads.length || 0); i++) {
+                            if (!pads[i]) continue;
+                            sendInput(snapshotGamepad(pads[i]));
+                        }
                     }
                     state.gamepadLoopHandle = requestAnimationFrame(pollGamepads);
                 }
                 window.addEventListener('gamepadconnected', function(e) { if (state.role === 'guest') sendInput(snapshotGamepad(e.gamepad)); });
                 window.addEventListener('gamepaddisconnected', function(e) { if (state.role === 'guest') sendInput({ type: 'gamepad-disconnect', index: e.gamepad.index }); });
-                pollGamepads();
+                pollGamepads(); // starts the loop; sends nothing until role becomes 'guest'
             }
 
             async function startHost() {

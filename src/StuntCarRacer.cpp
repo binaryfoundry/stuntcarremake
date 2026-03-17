@@ -2329,12 +2329,21 @@ static void RefreshCombinedInput(void) {
 
 #ifdef __EMSCRIPTEN__
         if (g_webrtcGuestConnected) {
-            /* Strict separation: only local devices → player 1 (top); only remote → player 2 (bottom). No mixing. */
+            /* Player 1 (top) = local input only; player 2 (bottom) = remote input only. No mixing.
+             *
+             * Gamepad note: the browser Gamepad API exposes the same physical gamepad to every tab
+             * on the machine, so SDL will see the guest's gamepad even on the host page.
+             * Guard: only use local gamepads if this tab currently has browser focus.
+             * When the guest tab is active (no focus here), ignore local gamepads so the guest's
+             * gamepad exclusively drives player 2 via WebRTC and does not also drive player 1. */
             DWORD localOnly = g_keyboardInput;
-            for (int i = 0; i < MAX_LOCAL_PLAYERS; ++i)
-                localOnly |= g_gamepadInput[i];
-            lastInput = localOnly;           /* player 1 (top) = host keys + host pads only */
-            g_player2Input = g_remotePlayer2Input;  /* player 2 (bottom) = remote keys + remote pads only */
+            const int hostTabHasFocus = EM_ASM_INT({ return document.hasFocus() ? 1 : 0; });
+            if (hostTabHasFocus) {
+                for (int i = 0; i < MAX_LOCAL_PLAYERS; ++i)
+                    localOnly |= g_gamepadInput[i];
+            }
+            lastInput = localOnly;
+            g_player2Input = g_remotePlayer2Input;
         } else {
             /* No WebRTC guest: starter device = player 1, rest = player 2. */
             lastInput = player1Input;
