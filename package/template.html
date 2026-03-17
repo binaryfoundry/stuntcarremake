@@ -151,6 +151,50 @@
       }
       .webrtc-overlay__copy:active { background: rgba(255, 255, 255, 0.08); }
       .webrtc-overlay__copy.copied { color: #3fb950; border-color: #3fb950; }
+      .webrtc-overlay__volume-row {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .webrtc-overlay__volume-label {
+        display: block;
+        color: #8b949e;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 6px;
+      }
+      .webrtc-overlay__volume-slider {
+        width: 100%;
+        height: 6px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 3px;
+        outline: none;
+      }
+      .webrtc-overlay__volume-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #c9d1d9;
+        cursor: pointer;
+        border: none;
+        transition: background 0.2s;
+      }
+      .webrtc-overlay__volume-slider::-webkit-slider-thumb:hover { background: #fff; }
+      .webrtc-overlay__volume-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #c9d1d9;
+        cursor: pointer;
+        border: none;
+      }
+      .webrtc-overlay__volume-slider::-moz-range-thumb:hover { background: #fff; }
       body.webrtc-join-mode .webrtc-overlay .webrtc-overlay__link-row { display: none !important; }
       /* Join mode: video only, scaled to page with aspect ratio maintained; no game UI */
       body.webrtc-join-mode .emscripten { display: none !important; }
@@ -185,6 +229,10 @@
       <div class="webrtc-overlay__link-row" id="webrtcLinkRow" style="display:none">
         <input type="text" readonly class="webrtc-overlay__input" id="webrtcJoinLink" value="" />
         <button type="button" class="webrtc-overlay__copy" id="webrtcCopyBtn">Copy</button>
+      </div>
+      <div class="webrtc-overlay__volume-row">
+        <label class="webrtc-overlay__volume-label" for="webrtcVolume">Volume</label>
+        <input type="range" id="webrtcVolume" class="webrtc-overlay__volume-slider" min="0" max="100" value="100" />
       </div>
     </div>
     <div class="credit-overlay" aria-label="Links">
@@ -263,6 +311,51 @@
             const webrtcLinkRow = document.getElementById('webrtcLinkRow');
             const webrtcJoinLinkInput = document.getElementById('webrtcJoinLink');
             const webrtcCopyBtn = document.getElementById('webrtcCopyBtn');
+            const webrtcVolumeSlider = document.getElementById('webrtcVolume');
+
+            var VOLUME_STORAGE_KEY = 'stuntcar-webrtc-volume';
+
+            function applyVolume(value01) {
+                if (state.role === 'guest') {
+                    if (remoteVideo) remoteVideo.volume = value01;
+                    return;
+                }
+                if (typeof Module === 'undefined' || !Module.SDL2 || !Module.SDL2.audioContext) return;
+                var audio = Module.SDL2.audio;
+                if (!audio) return;
+                var sp = audio.scriptProcessorNode;
+                if (!sp) return;
+                var ctx = Module.SDL2.audioContext;
+                if (!audio.gainNode) {
+                    try {
+                        sp.disconnect();
+                        audio.gainNode = ctx.createGain();
+                        sp.connect(audio.gainNode);
+                        audio.gainNode.connect(ctx.destination);
+                    } catch (e) { return; }
+                }
+                audio.gainNode.gain.value = value01;
+            }
+
+            if (webrtcVolumeSlider) {
+                var saved = localStorage.getItem(VOLUME_STORAGE_KEY);
+                if (saved !== null) {
+                    var n = parseInt(saved, 10);
+                    if (!isNaN(n) && n >= 0 && n <= 100) {
+                        webrtcVolumeSlider.value = n;
+                    }
+                }
+                webrtcVolumeSlider.addEventListener('input', function() {
+                    var pct = parseInt(webrtcVolumeSlider.value, 10);
+                    var v = Math.max(0, Math.min(1, pct / 100));
+                    applyVolume(v);
+                    localStorage.setItem(VOLUME_STORAGE_KEY, String(pct));
+                });
+                webrtcVolumeSlider.addEventListener('change', function() {
+                    var pct = parseInt(webrtcVolumeSlider.value, 10);
+                    localStorage.setItem(VOLUME_STORAGE_KEY, String(pct));
+                });
+            }
 
             function setWebRTCStatus(text, className) {
                 if (!webrtcStatusEl) return;
@@ -381,7 +474,10 @@
                 };
 
                 pc.ontrack = function(event) {
-                    if (state.role === 'guest') remoteVideo.srcObject = event.streams[0];
+                    if (state.role === 'guest') {
+                        remoteVideo.srcObject = event.streams[0];
+                        if (webrtcVolumeSlider) remoteVideo.volume = parseInt(webrtcVolumeSlider.value, 10) / 100;
+                    }
                 };
 
                 pc.ondatachannel = function(event) {
@@ -553,6 +649,16 @@
                 setupPeerConnection();
                 await connectSignaling(state.room, state.peerId);
                 setWebRTCStatus('Hosting — share link with guest', 'hosting');
+                var hostVolumeTries = 0;
+                var hostVolumeInterval = setInterval(function() {
+                    if (webrtcVolumeSlider && state.role === 'host') {
+                        var v = parseInt(webrtcVolumeSlider.value, 10) / 100;
+                        applyVolume(v);
+                    }
+                    if ((typeof Module !== 'undefined' && Module.SDL2 && Module.SDL2.audio && Module.SDL2.audio.gainNode) || ++hostVolumeTries > 40) {
+                        clearInterval(hostVolumeInterval);
+                    }
+                }, 500);
             }
 
             async function startGuest(roomId) {
