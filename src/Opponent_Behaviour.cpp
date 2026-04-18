@@ -237,6 +237,7 @@ static float g_physicsStepScale = 1.0f;
 /* Carry fractional dt-scaled integration deltas between physics steps. */
 static long opponents_z_speed_step_remainder = 0;
 static long opponents_distance_step_remainder = 0;
+static long opponents_lateral_step_remainder = 0;
 static long opp_y_speed_step_remainder[NUM_OPP_WHEEL_POSITIONS] = {0, 0, 0};
 static long opp_actual_height_step_remainder[NUM_OPP_WHEEL_POSITIONS] = {0, 0, 0};
 
@@ -304,6 +305,7 @@ static void ResetOpponent(void) {
     opponents_z_speed = 0;
     opponents_z_speed_step_remainder = 0;
     opponents_distance_step_remainder = 0;
+    opponents_lateral_step_remainder = 0;
     opponents_required_z_speed_reached = FALSE;
 
     player_close_to_opponent = FALSE;
@@ -2306,11 +2308,6 @@ static void OpponentPlayerInteraction(void) {
     // TO DO: Tidy up, rename variables, remove gotos
     long d0, d1, d2;
     long count, piece;
-    // Per-step lateral slew limit; scale so real-time steering rate is constant across Hz.
-    const long lateral_step = (g_physicsStepScale > 0.0f)
-        ? (long)(9.0f * g_physicsStepScale + 0.5f)
-        : 9L;
-    const long lateral_step_clamped = (lateral_step < 1) ? 1 : lateral_step;
 
     //VALUE2 = players_road_x_position;
     //VALUE3 = rear_wheel_surface_x_position;
@@ -2498,14 +2495,14 @@ opi10:
     if (d0 >= -16)
         goto opi13;
 
-    d0 = -lateral_step_clamped;
+    d0 = DistributeStepValueWithScale(-9, g_physicsStepScale, &opponents_lateral_step_remainder);
     goto opi12;
 
 opi11:
     if (d0 < 16)
         goto opi13;
 
-    d0 = lateral_step_clamped;
+    d0 = DistributeStepValueWithScale(9, g_physicsStepScale, &opponents_lateral_step_remainder);
 
 opi12:
     d0 += opponents_road_x_position & 0xff;
