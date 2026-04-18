@@ -234,10 +234,16 @@ static bool opponents_required_z_speed_reached;
 
 /** Scale for integration deltas (stepSeconds / PHYSICS_REFERENCE_STEP_SECONDS). */
 static float g_physicsStepScale = 1.0f;
+/* Carry fractional dt-scaled integration deltas between physics steps. */
+static long opponents_z_speed_step_remainder = 0;
+static long opponents_distance_step_remainder = 0;
+static long opp_y_speed_step_remainder[NUM_OPP_WHEEL_POSITIONS] = {0, 0, 0};
+static long opp_actual_height_step_remainder[NUM_OPP_WHEEL_POSITIONS] = {0, 0, 0};
 
 /*    ===================== */
 /*    Function declarations */
 /*    ===================== */
+static long DistributeStepValueWithScale(long full_step_value, float step_scale, long* step_remainder_in_out);
 static void ResetOpponent(void);
 static void CalculateOpponentsRoadWheelPositions(void);
 static void GetSurfaceCoords(long piece, long segment);
@@ -291,9 +297,13 @@ static void ResetOpponent(void) {
 
     for (long i = 0; i < NUM_OPP_WHEEL_POSITIONS; i++) {
         opp_y_speed[i] = 0;
+        opp_y_speed_step_remainder[i] = 0;
+        opp_actual_height_step_remainder[i] = 0;
     }
 
     opponents_z_speed = 0;
+    opponents_z_speed_step_remainder = 0;
+    opponents_distance_step_remainder = 0;
     opponents_required_z_speed_reached = FALSE;
 
     player_close_to_opponent = FALSE;
@@ -305,6 +315,20 @@ static void ResetOpponent(void) {
         player_shadow_state[i] = {};
     }
     return;
+}
+
+static long DistributeStepValueWithScale(long full_step_value, float step_scale, long* step_remainder_in_out) {
+    if (step_scale <= 0.0f) {
+        *step_remainder_in_out = 0;
+        return 0;
+    }
+
+    const long scale_fp = static_cast<long>(step_scale * 65536.0f + 0.5f);
+    long long total =
+        static_cast<long long>(*step_remainder_in_out) + (static_cast<long long>(full_step_value) * scale_fp);
+    long substep_value = static_cast<long>(total / 65536ll);
+    *step_remainder_in_out = static_cast<long>(total - (static_cast<long long>(substep_value) * 65536ll));
+    return substep_value;
 }
 
 void CapturePreviousOpponentShadow(void) {
@@ -1236,7 +1260,7 @@ static void OpponentMovement(void) {
     value *= REDUCTION;
     value >>= 8;
     value <<= 3;
-    value = (long)((float)value * g_physicsStepScale);
+    value = DistributeStepValueWithScale(value, g_physicsStepScale, &opponents_distance_step_remainder);
     long byte = value & 0xff;
     value >>= 8;
     byte_count += byte;
@@ -1367,24 +1391,31 @@ static void UpdateOpponentsActualWheelHeights(void) {
     }
 
     // Update rear left wheel y speed and height
-    acceleration = (long)((float)((opp_y_acceleration[REAR_LEFT] * REDUCTION) >> 8) * g_physicsStepScale);
+    acceleration = ((opp_y_acceleration[REAR_LEFT] * REDUCTION) >> 8);
+    acceleration = DistributeStepValueWithScale(acceleration, g_physicsStepScale, &opp_y_speed_step_remainder[REAR_LEFT]);
     opp_y_speed[REAR_LEFT] += acceleration;
 
-    speed = (long)((float)((opp_y_speed[REAR_LEFT] * REDUCTION) >> 9) * g_physicsStepScale);
+    speed = ((opp_y_speed[REAR_LEFT] * REDUCTION) >> 9);
+    speed = DistributeStepValueWithScale(speed, g_physicsStepScale, &opp_actual_height_step_remainder[REAR_LEFT]);
     opp_actual_height[REAR_LEFT] += speed;
 
     // Update rear right wheel y speed and height
-    acceleration = (long)((float)((opp_y_acceleration[REAR_RIGHT] * REDUCTION) >> 8) * g_physicsStepScale);
+    acceleration = ((opp_y_acceleration[REAR_RIGHT] * REDUCTION) >> 8);
+    acceleration =
+        DistributeStepValueWithScale(acceleration, g_physicsStepScale, &opp_y_speed_step_remainder[REAR_RIGHT]);
     opp_y_speed[REAR_RIGHT] += acceleration;
 
-    speed = (long)((float)((opp_y_speed[REAR_RIGHT] * REDUCTION) >> 9) * g_physicsStepScale);
+    speed = ((opp_y_speed[REAR_RIGHT] * REDUCTION) >> 9);
+    speed = DistributeStepValueWithScale(speed, g_physicsStepScale, &opp_actual_height_step_remainder[REAR_RIGHT]);
     opp_actual_height[REAR_RIGHT] += speed;
 
     // Update front wheel y speed and height
-    acceleration = (long)((float)((opp_y_acceleration[FRONT] * REDUCTION) >> 8) * g_physicsStepScale);
+    acceleration = ((opp_y_acceleration[FRONT] * REDUCTION) >> 8);
+    acceleration = DistributeStepValueWithScale(acceleration, g_physicsStepScale, &opp_y_speed_step_remainder[FRONT]);
     opp_y_speed[FRONT] += acceleration;
 
-    speed = (long)((float)((opp_y_speed[FRONT] * REDUCTION) >> 9) * g_physicsStepScale);
+    speed = ((opp_y_speed[FRONT] * REDUCTION) >> 9);
+    speed = DistributeStepValueWithScale(speed, g_physicsStepScale, &opp_actual_height_step_remainder[FRONT]);
     opp_actual_height[FRONT] += speed;
 
     // Limit movement of opponent's wheels
@@ -1910,7 +1941,8 @@ static void UpdateOpponentsZSpeed(void) {
         a += adjust;
     }
 
-    long acceleration = (long)((float)((a * REDUCTION) >> 8) * g_physicsStepScale);
+    long acceleration = ((a * REDUCTION) >> 8);
+    acceleration = DistributeStepValueWithScale(acceleration, g_physicsStepScale, &opponents_z_speed_step_remainder);
     opponents_z_speed += acceleration;
     if (opponents_z_speed < 0)
         opponents_z_speed = 0;
