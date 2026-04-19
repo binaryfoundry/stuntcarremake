@@ -337,6 +337,7 @@ static void CarBehaviourActiveInstance(DWORD input, long* x, long* y, long* z, l
                                        long* z_angle, float stepSeconds);
 void ResetEngineAudioState(void);
 static long DistributeStepValueWithScale(long full_step_value, float step_scale, long* step_remainder_in_out);
+static long ResolveSharedSfxPanForActiveCarInstance(long defaultPan);
 
 #ifdef USE_AMIGA_RECORDING
 static bool OpenAmigaRecording(void);
@@ -1941,6 +1942,14 @@ static void CalculateGravityAcceleration(void) {
 /*    Description:    Calculate car acceleration caused by collision with other objects        */
 /*    ======================================================================================= */
 
+static long ResolveSharedSfxPanForActiveCarInstance(long defaultPan) {
+#ifdef __EMSCRIPTEN__
+    if (IsWebRTCGuestConnected())
+        return (GetActiveCarBehaviourInstance() == 1) ? DSBPAN_RIGHT : DSBPAN_LEFT;
+#endif
+    return defaultPan;
+}
+
 long damaged_limit = 10; // Actually track/league dependant (could add to track data)
 
 // NOTE: road_cushion_value is 0 for standard league and 1 for super league
@@ -2070,6 +2079,7 @@ static void CarCollisionDetection(void) {
 
         if (grounded_delay == 0) {
             if (!GroundedSoundBuffer->IsPlaying()) {
+                GroundedSoundBuffer->SetPan(ResolveSharedSfxPanForActiveCarInstance(DSBPAN_RIGHT));
                 GroundedSoundBuffer->SetCurrentPosition(0);
                 GroundedSoundBuffer->Play(NULL, NULL, NULL); // not looping
             }
@@ -4340,6 +4350,7 @@ static void DrawDustClouds(void) {
 
     /* Only start the sound when not already playing, so we don't restart it every tick */
     if (!OffRoadSoundBuffer->IsPlaying()) {
+        OffRoadSoundBuffer->SetPan(ResolveSharedSfxPanForActiveCarInstance(DSBPAN_RIGHT));
         OffRoadSoundBuffer->SetCurrentPosition(0);
         OffRoadSoundBuffer->Play(NULL, NULL, NULL); // not looping
     }
@@ -4394,6 +4405,7 @@ on_an_edge:
 
     /* Only start the sound when not already playing, so we don't restart it every tick */
     if (!WreckSoundBuffer->IsPlaying()) {
+        WreckSoundBuffer->SetPan(ResolveSharedSfxPanForActiveCarInstance(DSBPAN_RIGHT));
         WreckSoundBuffer->SetCurrentPosition(0);
         WreckSoundBuffer->Play(NULL, NULL, NULL); // not looping
     }
@@ -4452,6 +4464,7 @@ void UpdateDamage(void) {
 
     // Play smash sound effect
     if (IsAudioEnabled() && SmashSoundBuffer && !SmashSoundBuffer->IsPlaying()) {
+        SmashSoundBuffer->SetPan(ResolveSharedSfxPanForActiveCarInstance(DSBPAN_LEFT));
         SmashSoundBuffer->SetCurrentPosition(0);
         SmashSoundBuffer->Play(NULL, NULL, NULL); // not looping
     }
@@ -4469,6 +4482,7 @@ PlayCreakSound:
     if (IsAudioEnabled() && CreakSoundBuffer) {
         CreakSoundBuffer->SetVolume(AmigaVolumeToMixerGain(amiga_volume));
         if (!CreakSoundBuffer->IsPlaying()) {
+            CreakSoundBuffer->SetPan(ResolveSharedSfxPanForActiveCarInstance(DSBPAN_RIGHT));
             CreakSoundBuffer->SetCurrentPosition(0);
             CreakSoundBuffer->Play(NULL, NULL, NULL); // not looping
         }

@@ -113,6 +113,14 @@ bool IsAudioEnabled(void) {
     return kEnableAudioInDebug;
 }
 
+bool IsWebRTCGuestConnected(void) {
+#ifdef __EMSCRIPTEN__
+    return g_webrtcGuestConnected;
+#else
+    return false;
+#endif
+}
+
 int wideScreen = 0;
 
 static bool bFrameMoved = FALSE;
@@ -2992,8 +3000,8 @@ static bool RunFrame(double frameTime, bool allowQuit) {
                     if (EngineSoundBuffers[i])  { EngineSoundBuffers[i]->SetPan(p1Pan);  EngineSoundBuffers[i]->SetVolume(vol); }
                     if (EngineSoundBuffers2[i]) { EngineSoundBuffers2[i]->SetPan(p2Pan); EngineSoundBuffers2[i]->SetVolume(vol); }
                 }
-                // In WebRTC mode, pan all P1 non-engine sounds fully left so the JS channel
-                // splitter cleanly separates player audio; restore original pans otherwise.
+                // In WebRTC mode, default shared non-engine SFX to P1 (left). Individual
+                // callsites can override pan at play time for per-instance routing.
                 const long p1SfxPan = webrtcActive ? DSBPAN_LEFT : DSBPAN_RIGHT;
                 const long smashPan  = webrtcActive ? DSBPAN_LEFT : DSBPAN_LEFT;
                 if (WreckSoundBuffer)    WreckSoundBuffer->SetPan(p1SfxPan);

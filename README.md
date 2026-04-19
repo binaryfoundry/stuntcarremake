@@ -43,6 +43,27 @@ The web build supports 2-player over WebRTC: one tab hosts (runs the game and st
 
 To deploy your own signaling server on **Cloudflare Workers** (Durable Objects), see **[webrtc/muttistuntcarsignal/README.md](webrtc/muttistuntcarsignal/README.md)** for setup, `wrangler` commands, and how to point the game at your worker URL.
 
+## TNT (YNY) Track Extraction Summary
+
+The hidden TNT 8-track pack is extracted from the `reference/SCR-TNT` binary with `tools/extract_tnt_tracks.py`.
+
+- The script validates the source fingerprint (`sha1=f6fd44dc425e367b3ce3c6af18cf07f2d7a50d7b`) unless `--force` is used.
+- It finds the embedded `piece.data.offsets` table by signature, then decodes track data using the original Amiga `set.road.data1` flow from the disassembly.
+- Hidden raw track blocks are decoded from these starts (hex): `0x03BE, 0x04BE, 0x0563, 0x067C, 0x074F, 0x0807, 0x0926, 0x09F3`.
+- Compressed section data is expanded into the port’s standard `804`-byte track format:
+  - section count + start section
+  - `100` x/z entries
+  - `100` angle/template entries
+  - `100` left y-id entries
+  - `100` right y-id entries
+  - `100` left overall y-shifts (word values)
+  - `100` right overall y-shifts (word values)
+  - standard/super boost bytes
+- Output files are written to `data/Tracks/TNT/` in fixed order:
+  - `DizzyDescent`, `WittyWay`, `CrazyCaper`, `AmazingAdept`
+  - `JerkilyJump`, `EvillyEpisode`, `TeasingTemper`, `RatRace`
+- A manifest is written to `data/Tracks/TNT/manifest.json` with source hash, block offsets, and per-track SHA1/SHA256.
+
 ## Notes
 
 - Original project: http://sourceforge.net/projects/stuntcarremake/
